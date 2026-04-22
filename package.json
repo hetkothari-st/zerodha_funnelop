@@ -1,0 +1,30 @@
+{
+    "name": "market-data-monitor",
+    "private": true,
+    "version": "1.0.0",
+    "type": "module",
+    "scripts": {
+        "dev": "python scripts/parse_contracts.py && vite",
+        "dev:vite": "vite",
+        "start": "node server/index.js",
+        "build": "vite build",
+        "preview": "vite preview"
+    },
+    "dependencies": {
+        "axios": "^1.6.0",
+        "express": "^4.19.2",
+        "clsx": "^2.0.0",
+        "framer-motion": "^10.16.4",
+        "lucide-react": "^0.292.0",
+        "react": "^18.2.0",
+        "react-dom": "^18.2.0",
+        "tailwind-merge": "^2.0.0"
+    },
+    "devDependencies": {
+        "@vitejs/plugin-react": "^4.2.0",
+        "autoprefixer": "^10.4.16",
+        "postcss": "^8.4.31",
+        "tailwindcss": "^3.3.5",
+        "vite": "^5.0.0"
+    }
+}
