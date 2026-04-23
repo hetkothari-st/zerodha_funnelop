@@ -218,11 +218,25 @@ const App = () => {
     if (!kiteChecking && !kiteReady) {
         const apiKey = kiteApiKey || ZERODHA_CONFIG.API_KEY;
         const zerodhaLoginUrl = `https://kite.zerodha.com/connect/login?api_key=${apiKey}&v=3`;
+        const urlParams = new URLSearchParams(window.location.search);
+        const kiteError = urlParams.get('kite_error');
+        const errorMessages = {
+            not_configured: 'Server env vars missing (ZERODHA_API_KEY / ZERODHA_API_SECRET not set in Railway).',
+            callback_failed: 'Zerodha returned an error. The login was cancelled or rejected.',
+            token_exchange_failed: 'Token exchange failed. The request_token may have expired — try again.',
+            server_error: 'Internal server error during token exchange. Check Railway logs.',
+        };
         return (
             <div className="min-h-screen bg-[#050505] flex items-center justify-center">
                 <div className="bg-[#0d0d11] border border-white/10 rounded-xl p-8 max-w-sm w-full mx-4 text-center">
                     <div className="text-4xl mb-4">⚡</div>
                     <h2 className="text-white font-bold text-xl mb-2">Connect Zerodha</h2>
+                    {kiteError && (
+                        <div className="mb-4 px-3 py-2 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-xs text-left">
+                            <span className="font-bold uppercase tracking-wide">Error: </span>
+                            {errorMessages[kiteError] || kiteError}
+                        </div>
+                    )}
                     <p className="text-white/50 text-sm mb-6">
                         Authorize your Zerodha account to receive live market data.
                         You'll be redirected back automatically.
@@ -233,9 +247,7 @@ const App = () => {
                     >
                         Login with Zerodha →
                     </button>
-                    <p className="text-white/20 text-xs mt-4 break-all">
-                        {zerodhaLoginUrl}
-                    </p>
+                    <p className="text-white/20 text-xs mt-4 break-all">{zerodhaLoginUrl}</p>
                 </div>
             </div>
         );
