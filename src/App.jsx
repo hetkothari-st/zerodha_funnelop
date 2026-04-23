@@ -6,41 +6,12 @@ import MonitorDashboard from './components/MonitorDashboard';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import logo from '/Doc1-removebg-preview.png';
-import { useAuth, buildWsCredential } from './auth/AuthContext';
-import LoginPage from './auth/LoginPage';
-import { ZERODHA_CONFIG } from './config/zerodha';
 
 function cn(...inputs) {
     return twMerge(clsx(inputs));
 }
 
 const App = () => {
-    const { user, logout } = useAuth();
-    const wsCredential = buildWsCredential(user);
-
-    // --- Kite Config (dynamic token from server) ---
-    const [kiteChecking, setKiteChecking] = useState(true);
-    const [kiteReady, setKiteReady] = useState(false);
-    const [kiteApiKey, setKiteApiKey] = useState('');
-
-    useEffect(() => {
-        fetch('/api/kite-config')
-            .then(r => r.json())
-            .then(cfg => {
-                setKiteApiKey(cfg.apiKey || ZERODHA_CONFIG.API_KEY);
-                if (cfg.accessToken) {
-                    ZERODHA_CONFIG.ACCESS_TOKEN = cfg.accessToken;
-                    setKiteReady(true);
-                } else if (ZERODHA_CONFIG.ACCESS_TOKEN) {
-                    setKiteReady(true);
-                }
-            })
-            .catch(() => {
-                setKiteApiKey(ZERODHA_CONFIG.API_KEY);
-                if (ZERODHA_CONFIG.ACCESS_TOKEN) setKiteReady(true);
-            })
-            .finally(() => setKiteChecking(false));
-    }, []);
 
     // --- Market Auto-Reconnect on market open ---
     const prevMarketOpenRef = useRef(false);
@@ -130,7 +101,7 @@ const App = () => {
         depthEvents.current.dispatchEvent(new CustomEvent('depth-packet', { detail: packet }));
     }, []);
 
-    const { status, depthData, subscribe } = useMarketData(isWsEnabled && kiteReady, handleRawMessage, handleDepthPacket, wsCredential);
+    const { status, depthData, subscribe } = useMarketData(isWsEnabled, handleRawMessage, handleDepthPacket);
 
     // --- Market Auto-Reconnect ---
     useEffect(() => {
@@ -213,45 +184,6 @@ const App = () => {
     // Controlled by sidebarCollapsed in both modes
     const isSidebarVisible = !sidebarCollapsed;
 
-    if (!user) return <LoginPage />;
-
-    if (!kiteChecking && !kiteReady) {
-        const apiKey = kiteApiKey || ZERODHA_CONFIG.API_KEY;
-        const zerodhaLoginUrl = `https://kite.zerodha.com/connect/login?api_key=${apiKey}&v=3`;
-        const urlParams = new URLSearchParams(window.location.search);
-        const kiteError = urlParams.get('kite_error');
-        const errorMessages = {
-            not_configured: 'Server env vars missing (ZERODHA_API_KEY / ZERODHA_API_SECRET not set in Railway).',
-            callback_failed: 'Zerodha returned an error. The login was cancelled or rejected.',
-            token_exchange_failed: 'Token exchange failed. The request_token may have expired — try again.',
-            server_error: 'Internal server error during token exchange. Check Railway logs.',
-        };
-        return (
-            <div className="min-h-screen bg-[#050505] flex items-center justify-center">
-                <div className="bg-[#0d0d11] border border-white/10 rounded-xl p-8 max-w-sm w-full mx-4 text-center">
-                    <div className="text-4xl mb-4">⚡</div>
-                    <h2 className="text-white font-bold text-xl mb-2">Connect Zerodha</h2>
-                    {kiteError && (
-                        <div className="mb-4 px-3 py-2 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-xs text-left">
-                            <span className="font-bold uppercase tracking-wide">Error: </span>
-                            {errorMessages[kiteError] || kiteError}
-                        </div>
-                    )}
-                    <p className="text-white/50 text-sm mb-6">
-                        Authorize your Zerodha account to receive live market data.
-                        You'll be redirected back automatically.
-                    </p>
-                    <button
-                        onClick={() => { window.location.href = zerodhaLoginUrl; }}
-                        className="block w-full py-3 bg-amber-500 hover:bg-amber-400 text-black font-bold rounded-lg transition-colors text-sm cursor-pointer"
-                    >
-                        Login with Zerodha →
-                    </button>
-                    <p className="text-white/20 text-xs mt-4 break-all">{zerodhaLoginUrl}</p>
-                </div>
-            </div>
-        );
-    }
 
     return (
         <div className="min-h-screen bg-[#050505] text-white flex h-screen overflow-hidden font-sans selection:bg-blue-500/30">
@@ -458,8 +390,6 @@ const App = () => {
                         depthEvents={depthEvents.current}
                         isSidebarVisible={isSidebarVisible}
                         onToggleSidebar={setSidebarCollapsed}
-                        user={user}
-                        onLogout={logout}
                     />
                 ))}
             </main>

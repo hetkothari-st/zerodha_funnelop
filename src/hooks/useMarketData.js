@@ -264,12 +264,17 @@ export const useMarketData = (enabled = true, onMessage = null, onDepthPacket = 
 
     // ── Connect ──────────────────────────────────────────────────
     const connect = useCallback(() => {
-        const { API_KEY, ACCESS_TOKEN, WS_URL } = ZERODHA_CONFIG;
+        // If VITE_WS_HUB_URL is set, connect to the shared local hub instead of
+        // Zerodha directly — the hub holds the single Zerodha connection.
+        const hubUrl = import.meta.env.VITE_WS_HUB_URL || null;
 
-        if (!API_KEY || !ACCESS_TOKEN) {
-            console.error('[KiteWS] Missing API_KEY or ACCESS_TOKEN in src/config/zerodha.js');
-            setStatus('error');
-            return;
+        if (!hubUrl) {
+            const { API_KEY, ACCESS_TOKEN } = ZERODHA_CONFIG;
+            if (!API_KEY || !ACCESS_TOKEN) {
+                console.error('[KiteWS] Missing API_KEY or ACCESS_TOKEN and no VITE_WS_HUB_URL set');
+                setStatus('error');
+                return;
+            }
         }
 
         if (ws.current) {
@@ -280,7 +285,8 @@ export const useMarketData = (enabled = true, onMessage = null, onDepthPacket = 
         // Load offline instrument map (synchronous, from bundled JSON)
         loadInstrumentMap();
 
-        const url = `${WS_URL}?api_key=${API_KEY}&access_token=${ACCESS_TOKEN}`;
+        const { API_KEY, ACCESS_TOKEN, WS_URL } = ZERODHA_CONFIG;
+        const url = hubUrl || `${WS_URL}?api_key=${API_KEY}&access_token=${ACCESS_TOKEN}`;
         console.log('[KiteWS] Connecting...');
         setStatus('connecting');
 

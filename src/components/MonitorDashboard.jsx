@@ -127,8 +127,6 @@ const MonitorDashboard = ({
     depthEvents, // Low-latency event bus
     isSidebarVisible,
     onToggleSidebar,
-    user,
-    onLogout
 }) => {
     // --- Layout State is now controlled by Parent (App.jsx) ---
 
@@ -439,8 +437,6 @@ const MonitorDashboard = ({
                     setShowAllPrices={setShowAllPrices}
                     isSidebarVisible={isSidebarVisible}
                     onToggleSidebar={onToggleSidebar}
-                    user={user}
-                    onLogout={onLogout}
                 />
             ) : (
                 <VerticalLayout
@@ -460,8 +456,6 @@ const MonitorDashboard = ({
                     onReorderTokens={setMonitoredTokens}
                     isSidebarVisible={isSidebarVisible}
                     depthDataRef={latestDepthData}
-                    user={user}
-                    onLogout={onLogout}
                 />
             )}
         </div>

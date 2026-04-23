@@ -469,8 +469,6 @@ const VerticalLayout = ({
     isSidebarVisible,
     depthDataRef,
     onClearLogs,
-    user,
-    onLogout
 }) => {
     // --- Top Bar State (Unchanged) ---
     const [globalIndex, setGlobalIndex] = useState('NIFTY');
@@ -754,21 +752,6 @@ const VerticalLayout = ({
                         <Trash2 size={10} /> Clear
                     </button>
 
-                    <div className="ml-4 flex items-center gap-1.5 bg-white/[0.04] border border-white/10 rounded h-7 pl-1.5 pr-1">
-                        <div className="w-5 h-5 rounded-full bg-blue-500/20 border border-blue-500/40 flex items-center justify-center text-[9px] font-black text-blue-300">
-                            {(user?.name || user?.email || '?').charAt(0).toUpperCase()}
-                        </div>
-                        <span className="text-[10px] font-bold text-white/60 max-w-[80px] truncate">
-                            {user?.name || user?.email}
-                        </span>
-                        <button
-                            onClick={onLogout}
-                            title="Sign out"
-                            className="p-1 rounded hover:bg-white/10 text-white/40 hover:text-red-400 transition-colors"
-                        >
-                            <LogOut size={11} />
-                        </button>
-                    </div>
                 </div>
             )}
 
