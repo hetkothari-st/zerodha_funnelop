@@ -215,27 +215,31 @@ const App = () => {
 
     if (!user) return <LoginPage />;
 
-    if (!kiteChecking && !kiteReady) return (
-        <div className="min-h-screen bg-[#050505] flex items-center justify-center">
-            <div className="bg-[#0d0d11] border border-white/10 rounded-xl p-8 max-w-sm w-full mx-4 text-center">
-                <div className="text-4xl mb-4">⚡</div>
-                <h2 className="text-white font-bold text-xl mb-2">Connect Zerodha</h2>
-                <p className="text-white/50 text-sm mb-6">
-                    Authorize your Zerodha account to receive live market data.
-                    You'll be redirected back automatically.
-                </p>
-                <a
-                    href={`https://kite.zerodha.com/connect/login?api_key=${kiteApiKey}&v=3`}
-                    className="block w-full py-3 bg-amber-500 hover:bg-amber-400 text-black font-bold rounded-lg transition-colors text-sm"
-                >
-                    Login with Zerodha →
-                </a>
-                <p className="text-white/20 text-xs mt-4">
-                    Your session token is valid until midnight IST.
-                </p>
+    if (!kiteChecking && !kiteReady) {
+        const apiKey = kiteApiKey || ZERODHA_CONFIG.API_KEY;
+        const zerodhaLoginUrl = `https://kite.zerodha.com/connect/login?api_key=${apiKey}&v=3`;
+        return (
+            <div className="min-h-screen bg-[#050505] flex items-center justify-center">
+                <div className="bg-[#0d0d11] border border-white/10 rounded-xl p-8 max-w-sm w-full mx-4 text-center">
+                    <div className="text-4xl mb-4">⚡</div>
+                    <h2 className="text-white font-bold text-xl mb-2">Connect Zerodha</h2>
+                    <p className="text-white/50 text-sm mb-6">
+                        Authorize your Zerodha account to receive live market data.
+                        You'll be redirected back automatically.
+                    </p>
+                    <button
+                        onClick={() => { window.location.href = zerodhaLoginUrl; }}
+                        className="block w-full py-3 bg-amber-500 hover:bg-amber-400 text-black font-bold rounded-lg transition-colors text-sm cursor-pointer"
+                    >
+                        Login with Zerodha →
+                    </button>
+                    <p className="text-white/20 text-xs mt-4 break-all">
+                        {zerodhaLoginUrl}
+                    </p>
+                </div>
             </div>
-        </div>
-    );
+        );
+    }
 
     return (
         <div className="min-h-screen bg-[#050505] text-white flex h-screen overflow-hidden font-sans selection:bg-blue-500/30">
