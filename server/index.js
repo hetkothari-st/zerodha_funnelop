@@ -290,6 +290,8 @@ app.get('/api/kite-config', (req, res) => {
 });
 
 app.get('/connect', (_req, res) => {
+    const OP_URL = process.env.FUNNEL_OP_URL || null;
+    const EQ_URL = process.env.FUNNEL_EQ_URL || null;
     res.send(`<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -320,8 +322,8 @@ button:disabled{opacity:.3;cursor:not-allowed}
 <div class="row"><div class="dot" id="dot"></div><span id="msg">Checking&hellip;</span></div>
 <button id="btn" onclick="login()" style="display:none">Connect Zerodha &nearr;</button>
 <div class="apps" id="apps">
-  <a class="app-link" id="op" href="#" target="_blank">funnel_op <span class="port">:5191 &rarr;</span></a>
-  <a class="app-link" id="eq" href="#" target="_blank">funnel_eq <span class="port">:5292 &rarr;</span></a>
+  <a class="app-link" id="op" href="#" target="_blank">funnel_op <span class="port">&rarr;</span></a>
+  <a class="app-link" id="eq" href="#" target="_blank">funnel_eq <span class="port">&rarr;</span></a>
 </div>
 <p class="note" id="note"></p>
 <script>
@@ -339,12 +341,14 @@ function setOk(){
   document.getElementById('msg').textContent='✓ Zerodha connected';
   document.getElementById('btn').style.display='none';
   var apps=document.getElementById('apps');apps.style.display='flex';
-  document.getElementById('op').href='http://'+H+':5191';
-  document.getElementById('eq').href='http://'+H+':5292';
+  var opUrl=${JSON.stringify(OP_URL)}||('http://'+H+':5191');
+  var eqUrl=${JSON.stringify(EQ_URL)}||('http://'+H+':5292');
+  document.getElementById('op').href=opUrl;
+  document.getElementById('eq').href=eqUrl;
   note('Opening apps…');
   setTimeout(function(){
-    window.open('http://'+H+':5191','funnel_op');
-    setTimeout(function(){window.open('http://'+H+':5292','funnel_eq');},500);
+    window.open(opUrl,'funnel_op');
+    setTimeout(function(){window.open(eqUrl,'funnel_eq');},500);
     note('');
   },700);
 }
