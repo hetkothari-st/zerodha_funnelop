@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Database, Plus, Trash2, LayoutGrid, Monitor, Eye, EyeOff, CheckSquare, Square, PanelLeftClose, PanelLeft, Columns } from 'lucide-react';
+import { Database, Plus, Trash2, LayoutGrid, Monitor, Eye, EyeOff, CheckSquare, Square, PanelLeftClose, PanelLeft, Columns, LogIn } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useMarketData } from './hooks/useMarketData';
 import MonitorDashboard from './components/MonitorDashboard';
@@ -77,6 +77,50 @@ const App = () => {
     }, [monitorLayouts]);
 
     const [activeNotifications, setActiveNotifications] = useState([]);
+    const [requestToken, setRequestToken] = useState('');
+    const [tokenExchangeState, setTokenExchangeState] = useState('idle');
+    const [accessToken, setAccessToken] = useState('');
+    const [accessTokenState, setAccessTokenState] = useState('idle'); // idle | loading | error
+
+    const handleSetAccessToken = useCallback(async () => {
+        if (!accessToken.trim()) return;
+        setAccessTokenState('loading');
+        try {
+            const res = await fetch(`http://${window.location.hostname}:3001/api/set-access-token`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ access_token: accessToken.trim() }),
+            });
+            const data = await res.json();
+            if (!data.ok) { setAccessTokenState('error'); return; }
+            localStorage.setItem('kite_access_token', data.access_token);
+            setAccessToken('');
+            setAccessTokenState('idle');
+            setIsWsEnabled(true);
+        } catch {
+            setAccessTokenState('error');
+        }
+    }, [accessToken]);
+
+    const handleExchangeToken = useCallback(async () => {
+        if (!requestToken.trim()) return;
+        setTokenExchangeState('loading');
+        try {
+            const res = await fetch(`http://${window.location.hostname}:3001/api/exchange-token`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ request_token: requestToken.trim() }),
+            });
+            const data = await res.json();
+            if (!data.ok) { setTokenExchangeState('error'); return; }
+            localStorage.setItem('kite_access_token', data.access_token);
+            setRequestToken('');
+            setTokenExchangeState('idle');
+            setIsWsEnabled(true);
+        } catch {
+            setTokenExchangeState('error');
+        }
+    }, [requestToken]);
 
     // --- WebSocket Centralization ---
     const addDebug = useCallback((msg) => {
@@ -237,6 +281,65 @@ const App = () => {
                             {isWsEnabled ? "Disconnect" : "Connect"}
                         </button>
                     </div>
+                    {(status === 'error' || status === 'disconnected') && (
+                        <div className="mt-2 space-y-1.5">
+                            {/* Direct access_token paste */}
+                            <div className="flex gap-1">
+                                <input
+                                    type="text"
+                                    value={accessToken}
+                                    onChange={e => { setAccessToken(e.target.value); setAccessTokenState('idle'); }}
+                                    onKeyDown={e => e.key === 'Enter' && handleSetAccessToken()}
+                                    placeholder="Paste access_token…"
+                                    className={cn(
+                                        "flex-1 min-w-0 bg-white/5 border rounded px-2 py-1 text-[9px] font-mono text-white/70 placeholder-white/20 outline-none focus:border-white/30 transition-colors",
+                                        accessTokenState === 'error' ? "border-red-500/50" : "border-emerald-500/20"
+                                    )}
+                                />
+                                <button
+                                    onClick={handleSetAccessToken}
+                                    disabled={!accessToken.trim() || accessTokenState === 'loading'}
+                                    className="px-2 py-1 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[9px] font-bold hover:bg-emerald-500/20 transition-all disabled:opacity-30"
+                                >
+                                    {accessTokenState === 'loading' ? '…' : 'SET'}
+                                </button>
+                            </div>
+                            {accessTokenState === 'error' && (
+                                <p className="text-[9px] text-red-400/70 px-1">Failed. Check token.</p>
+                            )}
+                            <div className="border-t border-white/5 pt-1.5" />
+                            <a
+                                href={`http://${window.location.hostname}:3001/kite/login`}
+                                className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg bg-[#387ed1]/10 border border-[#387ed1]/30 text-[#387ed1] text-[10px] font-bold uppercase tracking-wider hover:bg-[#387ed1]/20 transition-all"
+                            >
+                                <LogIn size={10} />
+                                Login with Zerodha
+                            </a>
+                            <div className="flex gap-1">
+                                <input
+                                    type="text"
+                                    value={requestToken}
+                                    onChange={e => { setRequestToken(e.target.value); setTokenExchangeState('idle'); }}
+                                    onKeyDown={e => e.key === 'Enter' && handleExchangeToken()}
+                                    placeholder="Paste request_token…"
+                                    className={cn(
+                                        "flex-1 min-w-0 bg-white/5 border rounded px-2 py-1 text-[9px] font-mono text-white/70 placeholder-white/20 outline-none focus:border-white/30 transition-colors",
+                                        tokenExchangeState === 'error' ? "border-red-500/50" : "border-white/10"
+                                    )}
+                                />
+                                <button
+                                    onClick={handleExchangeToken}
+                                    disabled={!requestToken.trim() || tokenExchangeState === 'loading'}
+                                    className="px-2 py-1 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[9px] font-bold hover:bg-emerald-500/20 transition-all disabled:opacity-30"
+                                >
+                                    {tokenExchangeState === 'loading' ? '…' : 'GO'}
+                                </button>
+                            </div>
+                            {tokenExchangeState === 'error' && (
+                                <p className="text-[9px] text-red-400/70 px-1">Exchange failed. Check token.</p>
+                            )}
+                        </div>
+                    )}
                 </div>
 
                 {/* Section: Layout Mode */}

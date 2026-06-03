@@ -11,7 +11,9 @@
 
 export const ZERODHA_CONFIG = {
     API_KEY: import.meta.env.VITE_ZERODHA_API_KEY || '',
-    ACCESS_TOKEN: import.meta.env.VITE_ZERODHA_ACCESS_TOKEN || '',
+    get ACCESS_TOKEN() {
+        return localStorage.getItem('kite_access_token') || import.meta.env.VITE_ZERODHA_ACCESS_TOKEN || '';
+    },
 
     // WebSocket endpoint (do not change)
     WS_URL: 'wss://ws.kite.trade',
