@@ -300,72 +300,138 @@ app.get('/connect', (_req, res) => {
 <title>Funnel Launcher</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{background:#050505;color:#e0e0e0;font-family:'Courier New',monospace;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2rem;padding:2rem}
-h1{font-size:.78rem;color:#ffffff25;letter-spacing:.35em;text-transform:uppercase}
+body{background:#050505;color:#e0e0e0;font-family:'Courier New',monospace;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1.5rem;padding:2rem}
+h1{font-size:.75rem;color:#ffffff20;letter-spacing:.35em;text-transform:uppercase}
 .row{display:flex;align-items:center;gap:.75rem;font-size:.95rem}
 .dot{width:9px;height:9px;border-radius:50%;background:#f87171;flex-shrink:0;transition:background .4s}
 .dot.ok{background:#4ade80}
 .dot.spin{background:#facc15;animation:blink .9s ease-in-out infinite}
 @keyframes blink{0%,100%{opacity:1}50%{opacity:.15}}
-button{background:#111;border:1px solid #252525;color:#bbb;padding:.65rem 1.4rem;font-family:inherit;font-size:.82rem;cursor:pointer;letter-spacing:.06em;transition:all .15s}
+.actions{display:flex;flex-direction:column;gap:.7rem;width:100%;max-width:320px}
+.inp-row{display:flex;gap:.4rem}
+input{flex:1;background:#0f0f0f;border:1px solid #252525;color:#ccc;padding:.55rem .75rem;font-family:inherit;font-size:.78rem;outline:none}
+input:focus{border-color:#444}
+input::placeholder{color:#ffffff20}
+button{background:#111;border:1px solid #252525;color:#bbb;padding:.55rem 1rem;font-family:inherit;font-size:.78rem;cursor:pointer;white-space:nowrap;transition:all .15s}
 button:hover{background:#1c1c1c;border-color:#3a3a3a;color:#fff}
 button:disabled{opacity:.3;cursor:not-allowed}
-.apps{display:none;flex-direction:column;gap:.55rem;width:100%;max-width:300px}
-.app-link{display:flex;justify-content:space-between;align-items:center;padding:.6rem .9rem;background:#0c0c0c;border:1px solid #191919;color:#4ade80;text-decoration:none;font-size:.8rem;transition:all .15s}
+.btn-primary{border-color:#3b82f6;color:#93c5fd}
+.btn-primary:hover{background:#0f1f3d;border-color:#60a5fa}
+.divider{display:flex;align-items:center;gap:.75rem;color:#ffffff15;font-size:.7rem}
+.divider::before,.divider::after{content:'';flex:1;height:1px;background:#ffffff10}
+.apps{display:none;flex-direction:column;gap:.5rem;width:100%;max-width:320px}
+.app-link{display:flex;justify-content:space-between;align-items:center;padding:.55rem .9rem;background:#0c0c0c;border:1px solid #191919;color:#4ade80;text-decoration:none;font-size:.8rem;transition:all .15s}
 .app-link:hover{border-color:#4ade80;background:#061206}
-.port{color:#ffffff20;font-size:.72rem}
-.note{font-size:.7rem;color:#ffffff25;text-align:center;line-height:1.8}
+.note{font-size:.7rem;color:#ffffff30;text-align:center;min-height:1.2em}
+.err{color:#f87171}
 </style>
 </head>
 <body>
 <h1>Funnel Launcher</h1>
 <div class="row"><div class="dot" id="dot"></div><span id="msg">Checking&hellip;</span></div>
-<button id="btn" onclick="login()" style="display:none">Connect Zerodha &nearr;</button>
-<div class="apps" id="apps">
-  <a class="app-link" id="op" href="#" target="_blank">funnel_op <span class="port">&rarr;</span></a>
-  <a class="app-link" id="eq" href="#" target="_blank">funnel_eq <span class="port">&rarr;</span></a>
+
+<div class="actions" id="actions">
+  <button class="btn-primary" id="loginBtn" onclick="login()">Connect Zerodha &nearr;</button>
+
+  <div class="divider">or paste request_token</div>
+  <div class="inp-row">
+    <input id="rtInput" placeholder="request_token from callback URL" />
+    <button onclick="exchangeToken()">Exchange</button>
+  </div>
+
+  <div class="divider">or paste access_token</div>
+  <div class="inp-row">
+    <input id="atInput" placeholder="access_token" />
+    <button onclick="setToken()">Set</button>
+  </div>
 </div>
+
+<div class="apps" id="apps">
+  <a class="app-link" id="op" href="#" target="_blank">funnel_op &rarr;</a>
+  <a class="app-link" id="eq" href="#" target="_blank">funnel_eq &rarr;</a>
+  <button onclick="relogin()" style="margin-top:.3rem;font-size:.72rem;color:#ffffff30;border-color:#1a1a1a">Re-connect Zerodha</button>
+</div>
+
 <p class="note" id="note"></p>
 <script>
 var H=location.hostname,ok=false,popup=null;
-function note(t){document.getElementById('note').textContent=t;}
+var opUrl=${JSON.stringify(OP_URL)}||('http://'+H+':5191');
+var eqUrl=${JSON.stringify(EQ_URL)}||('http://'+H+':5292');
+
+function note(t,err){
+  var el=document.getElementById('note');
+  el.textContent=t;
+  el.className='note'+(err?' err':'');
+}
+
 async function poll(){
   try{
     var d=await fetch('/api/kite-config').then(function(r){return r.json();});
-    if(d.configured){setOk();}else{setWait();}
-  }catch(e){setWait();}
+    if(d.configured){setOk();}else{if(!ok)setWait();}
+  }catch(e){if(!ok)setWait();}
 }
+
 function setOk(){
-  if(ok)return;ok=true;
+  ok=true;
   document.getElementById('dot').className='dot ok';
-  document.getElementById('msg').textContent='✓ Zerodha connected';
-  document.getElementById('btn').style.display='none';
+  document.getElementById('msg').textContent='\\u2713 Zerodha connected';
+  document.getElementById('actions').style.display='none';
   var apps=document.getElementById('apps');apps.style.display='flex';
-  var opUrl=${JSON.stringify(OP_URL)}||('http://'+H+':5191');
-  var eqUrl=${JSON.stringify(EQ_URL)}||('http://'+H+':5292');
   document.getElementById('op').href=opUrl;
   document.getElementById('eq').href=eqUrl;
-  note('Opening apps…');
-  setTimeout(function(){
-    window.open(opUrl,'funnel_op');
-    setTimeout(function(){window.open(eqUrl,'funnel_eq');},500);
-    note('');
-  },700);
 }
+
 function setWait(){
-  if(ok)return;
   document.getElementById('dot').className='dot';
   document.getElementById('msg').textContent='Zerodha not connected';
-  var b=document.getElementById('btn');b.style.display='block';b.disabled=false;b.textContent='Connect Zerodha ↗';
+  document.getElementById('actions').style.display='flex';
+  document.getElementById('loginBtn').disabled=false;
+  document.getElementById('loginBtn').textContent='Connect Zerodha \\u2197';
 }
+
+function relogin(){
+  ok=false;
+  document.getElementById('apps').style.display='none';
+  document.getElementById('dot').className='dot';
+  document.getElementById('msg').textContent='Zerodha not connected';
+  document.getElementById('actions').style.display='flex';
+  login();
+}
+
 function login(){
-  var b=document.getElementById('btn');b.disabled=true;b.textContent='Waiting…';
+  var b=document.getElementById('loginBtn');
+  b.disabled=true;b.textContent='Waiting\\u2026';
   document.getElementById('dot').className='dot spin';
-  document.getElementById('msg').textContent='Login in progress…';
+  document.getElementById('msg').textContent='Login in progress\\u2026';
   popup=window.open('/kite/login','zerodha','width=560,height=680,left=200,top=80');
-  if(!popup){note('Popup blocked — allow popups for this site and retry.');setWait();return;}
+  if(!popup){note('Popup blocked \\u2014 allow popups and retry.',true);setWait();return;}
   var t=setInterval(function(){if(popup&&popup.closed){clearInterval(t);if(!ok)setWait();}},800);
 }
+
+async function exchangeToken(){
+  var rt=document.getElementById('rtInput').value.trim();
+  if(!rt){note('Paste a request_token first.',true);return;}
+  note('Exchanging\\u2026');
+  try{
+    var r=await fetch('/api/exchange-token',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({request_token:rt})});
+    var d=await r.json();
+    if(d.ok){note('Token exchanged \\u2713 Pushing to both apps\\u2026');document.getElementById('rtInput').value='';setTimeout(poll,800);}
+    else{note('Error: '+d.error,true);}
+  }catch(e){note('Request failed.',true);}
+}
+
+async function setToken(){
+  var at=document.getElementById('atInput').value.trim();
+  if(!at){note('Paste an access_token first.',true);return;}
+  note('Setting token\\u2026');
+  try{
+    var r=await fetch('/api/set-access-token',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({access_token:at})});
+    var d=await r.json();
+    if(d.ok){note('Access token set \\u2713 Pushing to both apps\\u2026');document.getElementById('atInput').value='';setTimeout(poll,800);}
+    else{note('Error: '+d.error,true);}
+  }catch(e){note('Request failed.',true);}
+}
+
 window.addEventListener('message',function(e){if(e.data==='zerodha_connected'){if(popup)popup.close();poll();}});
 setInterval(poll,2500);poll();
 </script>
