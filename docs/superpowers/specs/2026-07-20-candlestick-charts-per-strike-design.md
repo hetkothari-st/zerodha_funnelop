@@ -152,3 +152,45 @@ installed). Verification approach:
   resizing the column resizes both charts).
 - Confirm `OriginalLayout.jsx`, sound alerts, and column
   header/resize/reorder/strike-picker are unaffected.
+
+## Addendum (post-verification UX revision)
+
+Tasks 1-4 of the implementation plan were built and reviewed clean, and
+manual browser verification (Task 5) confirmed the candle/volume/amber-highlight
+logic itself renders correctly. But it revealed the *layout* was wrong: charts
+were squeezed into the pre-existing narrow 240-320px draggable-column width
+(further halved for the buy/sell split), making them unreadably cramped.
+
+This addendum replaces the column-based container with a card/grid layout,
+while leaving all of Tasks 1, 2, and 4's work (candle aggregation, `CandleChart`,
+`depthEvents` threading) completely untouched — only `VerticalLayout.jsx`'s outer
+container and `DraggableColumn` are restructured, plus a mechanical
+`width`→`height` rename in `MonitorDashboard.jsx`.
+
+**New layout:** one full-width row per strike (`Reorder.Group axis="y"`,
+page scrolls vertically instead of horizontally). Each row keeps its
+existing header (strike/type/qty/expiry-index controls, drag-handle,
+remove button — content and behavior unchanged) at full width, then below
+it two `CandleChart` cards side by side at 50/50 width: **Buy** left,
+**Sell** right — same component, same props, just far more horizontal
+room per chart.
+
+**Resize:** the existing width-drag-resize (240-320px, right edge of
+column) is replaced by a height-drag-resize (300-700px default 400px,
+bottom edge of row) — width no longer means anything once rows are full
+container width. `token.width`/`onUpdateTokenWidth` are renamed throughout
+to `token.height`/`onUpdateTokenHeight` (dishonest to keep the old name for
+a field that now controls height).
+
+**Reorder:** unchanged in spirit — rows can still be manually dragged to
+reorder, now vertically (drag up/down) instead of horizontally, same
+ATM-priority auto-sort logic underneath (`Reorder.Group`'s `axis` prop is
+the only change needed for the drag mechanics themselves).
+
+**Minor copy fix:** the "Add Column" button is relabeled "Add Strike"
+since there are no more columns.
+
+**Untouched:** `CandleChart.jsx`, `candleAggregator.js`, ATM highlighting
+logic, quick-strikes, strike/expiry/index pickers' content, `OriginalLayout.jsx`,
+`MonitorDashboard.jsx`'s subscription/poll/alert-sound/depthEvents-threading
+logic (only the one width→height rename touches this file).
