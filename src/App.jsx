@@ -140,10 +140,6 @@ const App = () => {
     // --- Event Bus for Low-Latency Alerts ---
     const depthEvents = React.useRef(new EventTarget());
 
-    if (import.meta.env.DEV) {
-        window.__debugDepthEvents = depthEvents.current;
-    }
-
     const handleDepthPacket = useCallback((packet) => {
         // Dispatch raw packet immediately to listeners
         depthEvents.current.dispatchEvent(new CustomEvent('depth-packet', { detail: packet }));

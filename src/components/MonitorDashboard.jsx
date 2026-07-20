@@ -369,6 +369,10 @@ const MonitorDashboard = ({
         setLogs(prev => prev.filter(l => l.tokenId !== tokenId));
     }, []);
 
+    const handleClearLogs = useCallback((tokenId, side) => {
+        setLogs(prev => prev.filter(log => !(log.tokenId === tokenId && log.side === side)));
+    }, []);
+
     const handleClearAllTokens = useCallback(() => {
         setMonitoredTokens([]);
         setLogs([]);
@@ -405,9 +409,9 @@ const MonitorDashboard = ({
         }));
     }, [subscribe]);
 
-    const handleUpdateTokenHeight = useCallback((tokenId, newHeight) => {
+    const handleUpdateTokenWidth = useCallback((tokenId, newWidth) => {
         setMonitoredTokens(prev => prev.map(m =>
-            m.id === tokenId ? { ...m, height: newHeight } : m
+            m.id === tokenId ? { ...m, width: newWidth } : m
         ));
     }, []);
 
@@ -445,13 +449,13 @@ const MonitorDashboard = ({
                     onUpdateTokenQty={handleUpdateTokenQty}
                     onUpdateTokenStrike={handleUpdateTokenStrike}
                     onUpdateTokenType={handleUpdateTokenType}
-                    onUpdateTokenHeight={handleUpdateTokenHeight}
+                    onUpdateTokenWidth={handleUpdateTokenWidth}
+                    onClearLogs={handleClearLogs}
                     showAllPrices={showAllPrices}
                     setShowAllPrices={setShowAllPrices}
                     onReorderTokens={setMonitoredTokens}
                     isSidebarVisible={isSidebarVisible}
                     depthDataRef={latestDepthData}
-                    depthEvents={depthEvents}
                 />
             )}
         </div>

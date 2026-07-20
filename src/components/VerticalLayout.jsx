@@ -1,33 +1,146 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { Plus, Trash2, X, ChevronDown, Check, GripVertical, Zap } from 'lucide-react';
+import React, { useState, useMemo, useEffect, useRef, memo, useCallback } from 'react';
+import { Plus, Trash2, X, ChevronDown, Check, GripVertical, Eraser, Zap, LogOut } from 'lucide-react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { Reorder, useDragControls } from 'framer-motion';
+import { motion, AnimatePresence, Reorder, useDragControls } from 'framer-motion';
 import contractsData from '../contracts_nsefo.json';
-import CandleChart from './CandleChart';
 
 function cn(...inputs) {
     return twMerge(clsx(inputs));
 }
 
-const DraggableRow = ({ token, isAtm, onDragStateChange, onRemove, onUpdateQty, onUpdateStrike, onUpdateType, onUpdateHeight, depthEvents, depthDataRef }) => {
+const LogRow = memo(React.forwardRef(({ log, token, side, timeTick }, ref) => {
+    const isBuy = side === 'buy';
+
+    // Calculate relative timer
+    const elapsed = log.timestamp ? Math.floor((Date.now() - log.timestamp) / 1000) : 0;
+    const mins = Math.floor(elapsed / 60);
+    const secs = elapsed % 60;
+    const timerStr = `(${mins}:${secs.toString().padStart(2, '0')})`;
+
+    const isHighQty = log.observedQty >= 90000;
+    const isRecent = elapsed <= 60; // <-- ADD THIS LINE
+
+    return (
+        <motion.div
+            ref={ref}
+            layout
+            initial={{ opacity: 0, x: isBuy ? -10 : 10 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className={cn(
+                "flex items-center justify-between gap-1 text-[13px] leading-tight px-1 py-0.5 rounded transition-all border-b last:border-0 overflow-hidden",
+                isRecent
+                    ? (isBuy ? "bg-emerald-500/20 border-emerald-500/35 shadow-[0_0_12px_rgba(16,185,129,0.3)]" : "bg-red-500/20 border-red-500/35 shadow-[0_0_12px_rgba(239,68,68,0.3)]")
+                    : "border-white/5 hover:bg-white/5 opacity-70"
+            )}
+        >
+            {isBuy ? (
+                <>
+                    <span className={cn("text-[10px] font-bold font-mono whitespace-nowrap shrink-0", isRecent ? "text-blue-200" : "text-blue-500")}>{timerStr}</span>
+                    <span className={cn(
+                        "font-mono flex-1 text-center whitespace-nowrap min-w-0 truncate transition-all duration-300",
+                        isHighQty ? "text-amber-400 font-black text-[14.5px] drop-shadow-[0_0_8px_rgba(251,191,36,0.6)] tracking-tighter" :
+                            isRecent ? "text-emerald-300 font-black text-[14.5px] drop-shadow-[0_0_8px_rgba(16,185,129,0.8)]" : "text-emerald-500/80 font-bold text-[14px]"
+                    )}>{log.observedQty}</span>
+                    <span className={cn(
+                        "font-mono whitespace-nowrap shrink-0 text-right transition-all duration-300",
+                        isHighQty
+                            ? "text-violet-200 font-black text-[14.5px] drop-shadow-[0_0_12px_rgba(167,139,250,1)]"
+                            : isRecent ? "text-violet-100 font-black text-[13.5px] drop-shadow-[0_0_5px_rgba(255,255,255,0.4)]" : "text-violet-400/80 font-bold text-[13px]"
+                    )}>{Number(log.price).toFixed(2)}</span>
+                </>
+            ) : (
+                <>
+                    <span className={cn(
+                        "font-mono whitespace-nowrap shrink-0 text-left transition-all duration-300",
+                        isHighQty
+                            ? "text-violet-200 font-black text-[14.5px] drop-shadow-[0_0_12px_rgba(167,139,250,1)]"
+                            : isRecent ? "text-violet-100 font-black text-[13.5px] drop-shadow-[0_0_5px_rgba(255,255,255,0.4)]" : "text-violet-400/80 font-bold text-[13px]"
+                    )}>{Number(log.price).toFixed(2)}</span>
+                    <span className={cn(
+                        "font-mono flex-1 text-center whitespace-nowrap min-w-0 truncate transition-all duration-300",
+                        isHighQty ? "text-amber-400 font-black text-[14.5px] drop-shadow-[0_0_8px_rgba(251,191,36,0.6)] tracking-tighter" :
+                            isRecent ? "text-red-300 font-black text-[14.5px] drop-shadow-[0_0_8px_rgba(239,68,68,0.8)]" : "text-red-500/80 font-bold text-[13px]"
+                    )}>{log.observedQty}</span>
+                    <span className={cn("text-[10px] font-bold font-mono whitespace-nowrap shrink-0 text-right", isRecent ? "text-blue-200" : "text-blue-500")}>{timerStr}</span>
+                </>
+            )}
+        </motion.div>
+    );
+}), (prev, next) => {
+    // Re-render if log changes OR if the timer needs to update (every second)
+    return prev.log.id === next.log.id && prev.timeTick === next.timeTick;
+});
+
+const DraggableColumn = ({ token, isAtm, onDragStateChange, logs, onRemove, onUpdateQty, onUpdateStrike, onUpdateType, onUpdateWidth, onClearLogs, timeTick, showNetQtyBreakdown }) => {
     const controls = useDragControls();
-    const rowHeight = token.height || 400;
+    const columnWidth = token.width || 300;
+
+    // Net Quantity Calculation Logic
+    // Net Quantity Calculation Logic
+    const { netBuyData, netSellData } = useMemo(() => {
+        // --- 1. Buy Side Logic ---
+        const maxBuyQtyPerPrice = {};
+        logs.forEach(log => {
+            if (log.side !== 'buy' || log.observedQty < 25000) return;
+            const price = Number(log.price).toFixed(2);
+            if (!maxBuyQtyPerPrice[price] || log.observedQty > maxBuyQtyPerPrice[price]) {
+                maxBuyQtyPerPrice[price] = log.observedQty;
+            }
+        });
+
+        const buyBreakdown = Object.entries(maxBuyQtyPerPrice)
+            .map(([price, qty]) => ({ price, qty }))
+            .sort((a, b) => parseFloat(b.price) - parseFloat(a.price));
+
+        const buyTotal = buyBreakdown.reduce((sum, item) => sum + item.qty, 0);
+
+        // Find the minimum buy price among the recorded buy levels
+        const buyPriceValues = Object.keys(maxBuyQtyPerPrice).map(Number);
+        const minBuyPrice = buyPriceValues.length > 0 ? Math.min(...buyPriceValues) : Infinity;
+
+        // --- 2. Sell Side Logic (Profitable Trades Only) ---
+        const maxSellQtyPerPrice = {};
+        logs.forEach(log => {
+            if (log.side !== 'sell' || log.observedQty < 25000) return;
+            const price = Number(log.price).toFixed(2);
+
+            // Sell side is only included if price > minBuyPrice (profitable)
+            if (parseFloat(price) > minBuyPrice) {
+                if (!maxSellQtyPerPrice[price] || log.observedQty > maxSellQtyPerPrice[price]) {
+                    maxSellQtyPerPrice[price] = log.observedQty;
+                }
+            }
+        });
+
+        const sellBreakdown = Object.entries(maxSellQtyPerPrice)
+            .map(([price, qty]) => ({ price, qty }))
+            .sort((a, b) => parseFloat(b.price) - parseFloat(a.price));
+
+        const sellTotal = sellBreakdown.reduce((sum, item) => sum + item.qty, 0);
+
+        return {
+            netBuyData: { total: buyTotal, breakdown: buyBreakdown },
+            netSellData: { total: sellTotal, breakdown: sellBreakdown }
+        };
+    }, [logs]);
 
     // Resizing Logic
     const handleResizeStart = (e) => {
         e.stopPropagation();
         e.preventDefault();
 
-        const startY = e.pageY;
-        const startHeight = rowHeight;
+        const startX = e.pageX;
+        const startWidth = columnWidth;
 
         onDragStateChange(true); // Lock ATM logic/reordering
 
         const handlePointerMove = (moveEvent) => {
-            const delta = moveEvent.pageY - startY;
-            const newHeight = Math.min(700, Math.max(300, startHeight + delta));
-            onUpdateHeight(newHeight);
+            const delta = moveEvent.pageX - startX;
+            const newWidth = Math.min(320, Math.max(240, startWidth + delta));
+            onUpdateWidth(newWidth);
         };
 
         const handlePointerUp = () => {
@@ -39,7 +152,7 @@ const DraggableRow = ({ token, isAtm, onDragStateChange, onRemove, onUpdateQty, 
 
         window.addEventListener('pointermove', handlePointerMove);
         window.addEventListener('pointerup', handlePointerUp);
-        document.body.style.cursor = 'row-resize';
+        document.body.style.cursor = 'col-resize';
     };
 
     // Derived All Strikes
@@ -108,19 +221,23 @@ const DraggableRow = ({ token, isAtm, onDragStateChange, onRemove, onUpdateQty, 
             dragControls={controls}
             onDragStart={() => onDragStateChange(true)}
             onDragEnd={() => onDragStateChange(false)}
-            whileDrag={{ scale: 1.01, zIndex: 50 }}
-            style={{ height: `${rowHeight}px` }}
+            whileDrag={{ scale: 1.02, zIndex: 50 }}
+            style={{
+                flex: `0 0 ${columnWidth}px`, // Strictly respect the width to prevent overlap
+                maxWidth: 320,
+                minWidth: 240
+            }}
             className={cn(
-                "w-full shrink-0 flex flex-col bg-[#0f1115] border rounded-lg shadow-xl transition-[border-color,box-shadow,height] duration-500 relative",
+                "h-full flex flex-col bg-[#0f1115] border rounded-lg shadow-xl transition-[border-color,box-shadow,flex-basis] duration-500 relative",
                 isAtm ? "border-yellow-400/50 shadow-[0_0_15px_rgba(250,204,21,0.15)] z-10" : "border-white/10"
             )}
         >
             {/* Resize Handle */}
             <div
-                className="absolute bottom-0 left-0 w-full h-1.5 cursor-row-resize hover:bg-blue-500/20 z-50 transition-colors"
+                className="absolute right-0 top-0 w-1.5 h-full cursor-col-resize hover:bg-blue-500/20 z-50 transition-colors"
                 onPointerDown={handleResizeStart}
             />
-            {/* Row Header */}
+            {/* Column Header */}
             <div className="p-2 border-b border-white/10 space-y-2 bg-[#15171c]">
                 <div className="flex items-center justify-between">
                     <div
@@ -219,25 +336,115 @@ const DraggableRow = ({ token, isAtm, onDragStateChange, onRemove, onUpdateQty, 
                 </div>
             </div>
 
-            {/* Split Charts (Buy | Sell) */}
+            {/* Split Columns (Buy | Sell) */}
             <div className="flex-1 min-h-0 flex divide-x divide-white/10">
-                {/* Buy Chart */}
+                {/* Buy Column */}
                 <div className="flex-1 flex flex-col min-w-0 group/buy">
                     <div className="p-1 border-b border-white/5 flex items-center justify-center gap-2 relative">
                         <span className="text-[9px] font-bold text-emerald-500 uppercase tracking-wider opacity-80">Buy</span>
+                        <button
+                            onClick={() => onClearLogs(token.id, 'buy')}
+                            className="opacity-30 hover:opacity-100 transition-opacity absolute right-1 p-0.5 hover:text-emerald-400 text-white/50"
+                            title="Clear Buy Logs"
+                        >
+                            <Eraser size={10} />
+                        </button>
                     </div>
-                    <div className="flex-1 min-h-0">
-                        <CandleChart key={token.tkn} token={token} side="buy" depthEvents={depthEvents} depthDataRef={depthDataRef} />
+                    <div className="flex-1 overflow-y-auto p-1 scrollbar-thin [&::-webkit-scrollbar]:w-1">
+                        <AnimatePresence initial={false} mode='popLayout'>
+                            {logs.filter(l => l.side === 'buy').slice(0, 250).map((log) => (
+                                <LogRow key={log.id} log={log} token={token} side="buy" timeTick={timeTick} />
+                            ))}
+                        </AnimatePresence>
+                    </div>
+                    {/* Net Qty Footer */}
+                    <div className={cn(
+                        "p-1 px-2 border-t border-white/10 bg-white/[0.02] transition-all",
+                        showNetQtyBreakdown ? "min-h-[60px] max-h-[120px] overflow-y-auto scrollbar-none" : "h-[28px]"
+                    )}>
+                        {!showNetQtyBreakdown ? (
+                            <div className="flex items-center justify-between h-full">
+                                <span className="text-[9px] font-bold text-white/30 uppercase">Net Qty</span>
+                                <span className={cn(
+                                    "font-mono text-[13px] font-black tracking-tight",
+                                    netBuyData.total > 0 ? "text-emerald-400 drop-shadow-[0_0_8px_rgba(52,211,153,0.3)]" : "text-white/20"
+                                )}>
+                                    {netBuyData.total.toLocaleString()}
+                                </span>
+                            </div>
+                        ) : (
+                            <div className="space-y-0.5">
+                                <div className="flex items-center justify-between border-b border-white/5 pb-0.5 mb-1">
+                                    <span className="text-[8px] font-black text-white/20 uppercase tracking-tighter">Net Breakdown (Buy)</span>
+                                    <span className="text-[10px] font-black text-emerald-400/80">{netBuyData.total.toLocaleString()}</span>
+                                </div>
+                                {netBuyData.breakdown.length === 0 ? (
+                                    <div className="text-[10px] text-white/10 text-center py-2 italic font-medium">No 25k+ Qty</div>
+                                ) : (
+                                    netBuyData.breakdown.map((item, idx) => (
+                                        <div key={idx} className="flex items-center justify-between text-[11px] font-mono group/item">
+                                            <span className="text-white/40 group-hover/item:text-white/60 transition-colors">{item.price}</span>
+                                            <span className="text-emerald-400/90 font-bold">{item.qty.toLocaleString()}</span>
+                                        </div>
+                                    ))
+                                )}
+                            </div>
+                        )}
                     </div>
                 </div>
 
-                {/* Sell Chart */}
+                {/* Sell Column */}
                 <div className="flex-1 flex flex-col min-w-0 group/sell">
                     <div className="p-1 border-b border-white/5 flex items-center justify-center gap-2 relative">
                         <span className="text-[9px] font-bold text-red-500 uppercase tracking-wider opacity-80">Sell</span>
+                        <button
+                            onClick={() => onClearLogs(token.id, 'sell')}
+                            className="opacity-30 hover:opacity-100 transition-opacity absolute right-1 p-0.5 hover:text-red-400 text-white/50"
+                            title="Clear Sell Logs"
+                        >
+                            <Eraser size={10} />
+                        </button>
                     </div>
-                    <div className="flex-1 min-h-0">
-                        <CandleChart key={token.tkn} token={token} side="sell" depthEvents={depthEvents} depthDataRef={depthDataRef} />
+                    <div className="flex-1 overflow-y-auto p-1 scrollbar-thin [&::-webkit-scrollbar]:w-1">
+                        <AnimatePresence initial={false} mode='popLayout'>
+                            {logs.filter(l => l.side === 'sell').slice(0, 250).map((log) => (
+                                <LogRow key={log.id} log={log} token={token} side="sell" timeTick={timeTick} />
+                            ))}
+                        </AnimatePresence>
+                    </div>
+                    {/* Net Qty Footer */}
+                    <div className={cn(
+                        "p-1 px-2 border-t border-white/10 bg-white/[0.02] transition-all",
+                        showNetQtyBreakdown ? "min-h-[60px] max-h-[120px] overflow-y-auto scrollbar-none" : "h-[28px]"
+                    )}>
+                        {!showNetQtyBreakdown ? (
+                            <div className="flex items-center justify-between h-full">
+                                <span className="text-[9px] font-bold text-white/30 uppercase">Net Qty</span>
+                                <span className={cn(
+                                    "font-mono text-[13px] font-black tracking-tight",
+                                    netSellData.total > 0 ? "text-red-400 drop-shadow-[0_0_8px_rgba(248,113,113,0.3)]" : "text-white/20"
+                                )}>
+                                    {netSellData.total.toLocaleString()}
+                                </span>
+                            </div>
+                        ) : (
+                            <div className="space-y-0.5">
+                                <div className="flex items-center justify-between border-b border-white/5 pb-0.5 mb-1">
+                                    <span className="text-[8px] font-black text-white/20 uppercase tracking-tighter">Net Breakdown (Sell)</span>
+                                    <span className="text-[10px] font-black text-red-400/80">{netSellData.total.toLocaleString()}</span>
+                                </div>
+                                {netSellData.breakdown.length === 0 ? (
+                                    <div className="text-[10px] text-white/10 text-center py-2 italic font-medium">No {token.quantity >= 100000 ? '1L+' : (token.quantity >= 1000 ? (token.quantity / 1000).toFixed(0) + 'k+' : token.quantity)} Qty</div>
+                                ) : (
+                                    netSellData.breakdown.map((item, idx) => (
+                                        <div key={idx} className="flex items-center justify-between text-[11px] font-mono group/item">
+                                            <span className="text-white/40 group-hover/item:text-white/60 transition-colors">{item.price}</span>
+                                            <span className="text-red-400/90 font-bold">{item.qty.toLocaleString()}</span>
+                                        </div>
+                                    ))
+                                )}
+                            </div>
+                        )}
                     </div>
                 </div>
             </div>
@@ -254,23 +461,31 @@ const VerticalLayout = ({
     onUpdateTokenQty,
     onUpdateTokenStrike,
     onUpdateTokenType,
-    onUpdateTokenHeight,
+    onUpdateTokenWidth,
     onClearTokens,
     visibleElements,
 
     onReorderTokens,
     isSidebarVisible,
     depthDataRef,
-    depthEvents,
+    onClearLogs,
 }) => {
     // --- Top Bar State (Unchanged) ---
     const [globalIndex, setGlobalIndex] = useState('NIFTY');
     const [globalExpiry, setGlobalExpiry] = useState('');
     const [atmStrikes, setAtmStrikes] = useState({});
+    const [timeTick, setTimeTick] = useState(0);
+    const [showNetQtyBreakdown, setShowNetQtyBreakdown] = useState(false);
     const isDraggingRef = useRef(false);
 
     // Throttle for activity sorting
     const lastActivitySortRef = useRef(0);
+
+    // Live Timer Tick
+    useEffect(() => {
+        const interval = setInterval(() => setTimeTick(t => t + 1), 1000);
+        return () => clearInterval(interval);
+    }, []);
 
     // --- Spot Price & ATM Logic (Multi-Index) ---
     // All known indices and their spot tokens/steps
@@ -514,8 +729,24 @@ const VerticalLayout = ({
                         onClick={handleAddColumn}
                         className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1 rounded text-xs font-bold flex items-center gap-1 transition-colors"
                     >
-                        <Plus size={14} /> Add Strike
+                        <Plus size={14} /> Add Column
                     </button>
+
+                    <div className="flex items-center gap-2 bg-white/5 px-2 py-1 rounded border border-white/10 h-7">
+                        <label className="text-[10px] text-white/40 uppercase font-black tracking-tight">Breakdown</label>
+                        <button
+                            onClick={() => setShowNetQtyBreakdown(!showNetQtyBreakdown)}
+                            className={cn(
+                                "w-7 h-4 rounded-full relative transition-colors duration-300",
+                                showNetQtyBreakdown ? "bg-emerald-500/80" : "bg-white/10"
+                            )}
+                        >
+                            <div className={cn(
+                                "absolute top-0.5 left-0.5 w-3 h-3 bg-white rounded-full transition-transform duration-300 shadow-sm",
+                                showNetQtyBreakdown ? "translate-x-3" : "translate-x-0"
+                            )} />
+                        </button>
+                    </div>
 
                     <button onClick={onClearTokens} className="bg-red-500/10 text-red-500 hover:bg-red-500/20 border border-red-500/20 font-bold py-1 px-3 rounded text-[10px] h-7 flex items-center gap-2">
                         <Trash2 size={10} /> Clear
@@ -525,23 +756,23 @@ const VerticalLayout = ({
             )}
 
             {/* Main Content with Reorder.Group */}
-            <div className="flex-1 overflow-y-auto overflow-x-hidden p-2 relative">
+            <div className="flex-1 overflow-x-auto overflow-y-hidden p-2 relative">
                 <Reorder.Group
-                    axis="y"
+                    axis="x"
                     values={monitoredTokens}
                     onReorder={onReorderTokens}
-                    className="flex flex-col gap-4 pb-4 w-full"
+                    className="flex h-full gap-4 pb-4 w-fit min-w-full" // Use w-fit to ensure scrollbar triggers correctly
                 >
                     {monitoredTokens.map(token => {
                         const isAtm = atmStrikes[token.index] !== undefined && parseFloat(token.strike) === atmStrikes[token.index];
                         return (
-                            <DraggableRow
+                            <DraggableColumn
                                 key={token.id}
                                 token={token}
                                 isAtm={isAtm}
-                                depthEvents={depthEvents}
-                                depthDataRef={depthDataRef}
+                                timeTick={timeTick}
                                 onDragStateChange={(val) => (isDraggingRef.current = val)}
+                                logs={logs.filter(l => l.tokenId === token.id || l.tokenId === token.tkn)}
                                 onRemove={() => onRemoveToken(token.id)}
                                 onUpdateQty={(q) => onUpdateTokenQty(token.id, q)}
                                 onUpdateStrike={(s) => {
@@ -570,14 +801,16 @@ const VerticalLayout = ({
                                         onUpdateTokenType(token.id, newType, contract.t, contract.ns);
                                     }
                                 }}
-                                onUpdateHeight={(h) => onUpdateTokenHeight(token.id, h)}
+                                onUpdateWidth={(w) => onUpdateTokenWidth(token.id, w)}
+                                onClearLogs={onClearLogs}
+                                showNetQtyBreakdown={showNetQtyBreakdown}
                             />
                         );
                     })}
 
                     {monitoredTokens.length === 0 && (
-                        <div className="flex items-center justify-center w-full h-40 border border-dashed border-white/10 rounded text-white/20 text-sm">
-                            Add a strike to start
+                        <div className="flex items-center justify-center w-64 h-full border border-dashed border-white/10 rounded text-white/20 text-sm">
+                            Add a column to start
                         </div>
                     )}
                 </Reorder.Group>
