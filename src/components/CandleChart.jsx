@@ -88,7 +88,7 @@ export default function CandleChart({ token, side, depthEvents, depthDataRef }) 
                 low: candle.low,
                 close: candle.close,
                 ...(overrideColor
-                    ? { color: overrideColor, borderColor: overrideColor, wickColor: overrideColor }
+                    ? { borderColor: overrideColor, wickColor: overrideColor }
                     : {}),
             });
 
