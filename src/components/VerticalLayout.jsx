@@ -1,5 +1,5 @@
-import React, { useState, useMemo, useEffect, useRef, useCallback } from 'react';
-import { Plus, Trash2, X, ChevronDown, Check, GripVertical, Zap, LogOut } from 'lucide-react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
+import { Plus, Trash2, X, ChevronDown, Check, GripVertical, Zap } from 'lucide-react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { Reorder, useDragControls } from 'framer-motion';
