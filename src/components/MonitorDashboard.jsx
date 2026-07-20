@@ -405,9 +405,9 @@ const MonitorDashboard = ({
         }));
     }, [subscribe]);
 
-    const handleUpdateTokenWidth = useCallback((tokenId, newWidth) => {
+    const handleUpdateTokenHeight = useCallback((tokenId, newHeight) => {
         setMonitoredTokens(prev => prev.map(m =>
-            m.id === tokenId ? { ...m, width: newWidth } : m
+            m.id === tokenId ? { ...m, height: newHeight } : m
         ));
     }, []);
 
@@ -445,7 +445,7 @@ const MonitorDashboard = ({
                     onUpdateTokenQty={handleUpdateTokenQty}
                     onUpdateTokenStrike={handleUpdateTokenStrike}
                     onUpdateTokenType={handleUpdateTokenType}
-                    onUpdateTokenWidth={handleUpdateTokenWidth}
+                    onUpdateTokenHeight={handleUpdateTokenHeight}
                     showAllPrices={showAllPrices}
                     setShowAllPrices={setShowAllPrices}
                     onReorderTokens={setMonitoredTokens}

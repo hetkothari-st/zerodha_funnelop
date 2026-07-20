@@ -10,24 +10,24 @@ function cn(...inputs) {
     return twMerge(clsx(inputs));
 }
 
-const DraggableColumn = ({ token, isAtm, onDragStateChange, onRemove, onUpdateQty, onUpdateStrike, onUpdateType, onUpdateWidth, depthEvents, depthDataRef }) => {
+const DraggableRow = ({ token, isAtm, onDragStateChange, onRemove, onUpdateQty, onUpdateStrike, onUpdateType, onUpdateHeight, depthEvents, depthDataRef }) => {
     const controls = useDragControls();
-    const columnWidth = token.width || 300;
+    const rowHeight = token.height || 400;
 
     // Resizing Logic
     const handleResizeStart = (e) => {
         e.stopPropagation();
         e.preventDefault();
 
-        const startX = e.pageX;
-        const startWidth = columnWidth;
+        const startY = e.pageY;
+        const startHeight = rowHeight;
 
         onDragStateChange(true); // Lock ATM logic/reordering
 
         const handlePointerMove = (moveEvent) => {
-            const delta = moveEvent.pageX - startX;
-            const newWidth = Math.min(320, Math.max(240, startWidth + delta));
-            onUpdateWidth(newWidth);
+            const delta = moveEvent.pageY - startY;
+            const newHeight = Math.min(700, Math.max(300, startHeight + delta));
+            onUpdateHeight(newHeight);
         };
 
         const handlePointerUp = () => {
@@ -39,7 +39,7 @@ const DraggableColumn = ({ token, isAtm, onDragStateChange, onRemove, onUpdateQt
 
         window.addEventListener('pointermove', handlePointerMove);
         window.addEventListener('pointerup', handlePointerUp);
-        document.body.style.cursor = 'col-resize';
+        document.body.style.cursor = 'row-resize';
     };
 
     // Derived All Strikes
@@ -108,23 +108,19 @@ const DraggableColumn = ({ token, isAtm, onDragStateChange, onRemove, onUpdateQt
             dragControls={controls}
             onDragStart={() => onDragStateChange(true)}
             onDragEnd={() => onDragStateChange(false)}
-            whileDrag={{ scale: 1.02, zIndex: 50 }}
-            style={{
-                flex: `0 0 ${columnWidth}px`, // Strictly respect the width to prevent overlap
-                maxWidth: 320,
-                minWidth: 240
-            }}
+            whileDrag={{ scale: 1.01, zIndex: 50 }}
+            style={{ height: `${rowHeight}px` }}
             className={cn(
-                "h-full flex flex-col bg-[#0f1115] border rounded-lg shadow-xl transition-[border-color,box-shadow,flex-basis] duration-500 relative",
+                "w-full shrink-0 flex flex-col bg-[#0f1115] border rounded-lg shadow-xl transition-[border-color,box-shadow,height] duration-500 relative",
                 isAtm ? "border-yellow-400/50 shadow-[0_0_15px_rgba(250,204,21,0.15)] z-10" : "border-white/10"
             )}
         >
             {/* Resize Handle */}
             <div
-                className="absolute right-0 top-0 w-1.5 h-full cursor-col-resize hover:bg-blue-500/20 z-50 transition-colors"
+                className="absolute bottom-0 left-0 w-full h-1.5 cursor-row-resize hover:bg-blue-500/20 z-50 transition-colors"
                 onPointerDown={handleResizeStart}
             />
-            {/* Column Header */}
+            {/* Row Header */}
             <div className="p-2 border-b border-white/10 space-y-2 bg-[#15171c]">
                 <div className="flex items-center justify-between">
                     <div
@@ -258,7 +254,7 @@ const VerticalLayout = ({
     onUpdateTokenQty,
     onUpdateTokenStrike,
     onUpdateTokenType,
-    onUpdateTokenWidth,
+    onUpdateTokenHeight,
     onClearTokens,
     visibleElements,
 
@@ -518,7 +514,7 @@ const VerticalLayout = ({
                         onClick={handleAddColumn}
                         className="bg-blue-600 hover:bg-blue-500 text-white px-3 py-1 rounded text-xs font-bold flex items-center gap-1 transition-colors"
                     >
-                        <Plus size={14} /> Add Column
+                        <Plus size={14} /> Add Strike
                     </button>
 
                     <button onClick={onClearTokens} className="bg-red-500/10 text-red-500 hover:bg-red-500/20 border border-red-500/20 font-bold py-1 px-3 rounded text-[10px] h-7 flex items-center gap-2">
@@ -529,17 +525,17 @@ const VerticalLayout = ({
             )}
 
             {/* Main Content with Reorder.Group */}
-            <div className="flex-1 overflow-x-auto overflow-y-hidden p-2 relative">
+            <div className="flex-1 overflow-y-auto overflow-x-hidden p-2 relative">
                 <Reorder.Group
-                    axis="x"
+                    axis="y"
                     values={monitoredTokens}
                     onReorder={onReorderTokens}
-                    className="flex h-full gap-4 pb-4 w-fit min-w-full" // Use w-fit to ensure scrollbar triggers correctly
+                    className="flex flex-col gap-4 pb-4 w-full"
                 >
                     {monitoredTokens.map(token => {
                         const isAtm = atmStrikes[token.index] !== undefined && parseFloat(token.strike) === atmStrikes[token.index];
                         return (
-                            <DraggableColumn
+                            <DraggableRow
                                 key={token.id}
                                 token={token}
                                 isAtm={isAtm}
@@ -574,14 +570,14 @@ const VerticalLayout = ({
                                         onUpdateTokenType(token.id, newType, contract.t, contract.ns);
                                     }
                                 }}
-                                onUpdateWidth={(w) => onUpdateTokenWidth(token.id, w)}
+                                onUpdateHeight={(h) => onUpdateTokenHeight(token.id, h)}
                             />
                         );
                     })}
 
                     {monitoredTokens.length === 0 && (
-                        <div className="flex items-center justify-center w-64 h-full border border-dashed border-white/10 rounded text-white/20 text-sm">
-                            Add a column to start
+                        <div className="flex items-center justify-center w-full h-40 border border-dashed border-white/10 rounded text-white/20 text-sm">
+                            Add a strike to start
                         </div>
                     )}
                 </Reorder.Group>
