@@ -178,6 +178,10 @@ function instrumentTokenToExchangeToken(instrumentToken, exchange = 'NFO') {
 
 // ── Main Hook ────────────────────────────────────────────────────────
 
+// Warn (once per page load) when a production build has no hub URL: the CSP only allows
+// the configured hub, so the ws://<host>:8765 fallback can never connect there.
+let warnedHubFallback = false;
+
 export const useMarketData = (enabled = true, onMessage = null, onDepthPacket = null, { accessToken = null, onSignedInElsewhere = null } = {}) => {
     const [status, setStatus] = useState('disconnected');
     const [depthData] = useState({}); // Kept for API compat — event bus handles all data
@@ -278,6 +282,10 @@ export const useMarketData = (enabled = true, onMessage = null, onDepthPacket = 
         // Hub holds the single Zerodha connection and relays to all clients.
         // VITE_WS_HUB_URL can override (e.g. different host/port).
         const hubBase = import.meta.env.VITE_WS_HUB_URL || `ws://${window.location.hostname}:8765`;
+        if (import.meta.env.PROD && !import.meta.env.VITE_WS_HUB_URL && !warnedHubFallback) {
+            warnedHubFallback = true;
+            console.warn(`[KiteWS] VITE_WS_HUB_URL not set — falling back to ${hubBase}, which is blocked in production`);
+        }
         const token = authRef.current.accessToken;
         if (!token) { setStatus('disconnected'); return; }
         const url = hubUrlWithToken(hubBase, token);
@@ -528,6 +536,7 @@ export const useMarketData = (enabled = true, onMessage = null, onDepthPacket = 
     const hasToken = Boolean(accessToken);
     const teardown = useCallback(() => {
         enabledRef.current = false;
+        isReady.current = false;
         if (ws.current) {
             ws.current.onclose = null;
             ws.current.onmessage = null;
