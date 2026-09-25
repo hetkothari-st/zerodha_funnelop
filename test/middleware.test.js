@@ -135,28 +135,31 @@ test('bust() throws → error handler catches it, request does not hang', async 
 });
 
 test('profile lookup fails during refetch (service error during session recheck) → 503', async () => {
-    const { auth, tokenFor } = fakeAuth({ user: approvedUser });
-    const srv = await serve(auth);
+    let callCount = 0;
+    const customStore = {
+        async get(id) {
+            callCount++;
+            if (callCount === 1) {
+                // First call: succeed with approved profile but different session
+                return { id, status: 'approved', role: 'user', current_session_id: 's2' };
+            }
+            // Second call (refetch after bust): throw to simulate Supabase failure
+            throw new Error('supabase down');
+        },
+        bust() {},
+    };
+    const auth = createAuthMiddleware({
+        verify: async () => ({ userId: 'user', sessionId: 's1' }),
+        profiles: customStore,
+    });
+    const app = express();
+    app.get('/u', ...auth.requireUser, (req, res) => res.json({ ok: true }));
+    const srv = await listen(app);
     try {
-        // First request succeeds and caches session s1
-        assert.equal((await get(`${srv.url}/u`, tokenFor('user', 's1'))).status, 200);
-
-        // Now the store starts throwing on get()
-        const customStore = {
-            get: async () => { throw new Error('supabase down'); },
-            bust() {},
-        };
-        const auth2 = createAuthMiddleware({
-            verify: async () => ({ userId: 'user', sessionId: 's2' }),
-            profiles: customStore,
-        });
-        const app = express();
-        app.get('/u', ...auth2.requireUser, (req, res) => res.json({ ok: true }));
-        const srv2 = await listen(app);
-        try {
-            const res = await get(`${srv2.url}/u`, 'anything');
-            assert.equal(res.status, 503);
-            assert.equal((await res.json()).code, 'auth_unavailable');
-        } finally { await srv2.close(); }
+        // Token has session 's1', profile has 's2' → mismatch triggers bust + refetch
+        const res = await get(`${srv.url}/u`, 'anything');
+        assert.equal(res.status, 503);
+        assert.equal((await res.json()).code, 'auth_unavailable');
+        assert.equal(callCount, 2, 'store.get() must be called exactly twice (initial + refetch)');
     } finally { await srv.close(); }
 });
