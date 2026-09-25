@@ -86,7 +86,7 @@ const App = () => {
         if (!accessToken.trim()) return;
         setAccessTokenState('loading');
         try {
-            const res = await fetch(`http://${window.location.hostname}:3001/api/set-access-token`, {
+            const res = await fetch("/api/set-access-token", {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ access_token: accessToken.trim() }),
@@ -106,7 +106,7 @@ const App = () => {
         if (!requestToken.trim()) return;
         setTokenExchangeState('loading');
         try {
-            const res = await fetch(`http://${window.location.hostname}:3001/api/exchange-token`, {
+            const res = await fetch("/api/exchange-token", {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ request_token: requestToken.trim() }),
@@ -309,7 +309,7 @@ const App = () => {
                             )}
                             <div className="border-t border-white/5 pt-1.5" />
                             <a
-                                href={`http://${window.location.hostname}:3001/kite/login`}
+                                href={"/kite/login"}
                                 className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg bg-[#387ed1]/10 border border-[#387ed1]/30 text-[#387ed1] text-[10px] font-bold uppercase tracking-wider hover:bg-[#387ed1]/20 transition-all"
                             >
                                 <LogIn size={10} />
