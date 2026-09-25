@@ -1,6 +1,9 @@
 import { sendError } from './errors.js';
 
-// Chains: requireUser = signed in + current session + approved.
+// Wraps async middleware to catch unhandled errors and pass to Express error handler.
+const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+
+// Chains: requireUser = signed in + approved + current session.
 //         requireAdmin = requireUser + role admin.
 export function createAuthMiddleware({ verify, profiles }) {
     function bearer(req) {
@@ -55,6 +58,6 @@ export function createAuthMiddleware({ verify, profiles }) {
         next();
     }
 
-    const requireUser = [authenticate, requireCurrentSession, requireApproved];
+    const requireUser = [wrap(authenticate), requireApproved, wrap(requireCurrentSession)];
     return { requireUser, requireAdmin: [...requireUser, requireAdminRole] };
 }

@@ -104,3 +104,59 @@ test('profile lookup failure → 503 auth_unavailable (not 401)', async () => {
         assert.equal((await res.json()).code, 'auth_unavailable');
     } finally { await srv.close(); }
 });
+
+test('pending user with stale session → 403 not_approved (approval checked before session)', async () => {
+    const { auth, tokenFor } = fakeAuth({ user: { ...approvedUser, status: 'pending', current_session_id: 's2' } });
+    const srv = await serve(auth);
+    try {
+        const res = await get(`${srv.url}/u`, tokenFor('user', 's1'));
+        assert.equal(res.status, 403);
+        assert.equal((await res.json()).code, 'not_approved');
+    } finally { await srv.close(); }
+});
+
+test('bust() throws → error handler catches it, request does not hang', async () => {
+    const auth = createAuthMiddleware({
+        verify: async () => ({ userId: 'user', sessionId: 's2' }),
+        profiles: {
+            get: async () => ({ id: 'user', status: 'approved', role: 'user', current_session_id: 's1' }),
+            bust() { throw new Error('bust failed'); }
+        },
+    });
+    const app = express();
+    app.get('/u', ...auth.requireUser, (req, res) => res.json({ ok: true }));
+    app.use((err, req, res, next) => res.status(500).json({ code: 'internal' }));
+    const srv = await listen(app);
+    try {
+        const res = await get(`${srv.url}/u`, 'anything');
+        assert.equal(res.status, 500);
+        assert.equal((await res.json()).code, 'internal');
+    } finally { await srv.close(); }
+});
+
+test('profile lookup fails during refetch (service error during session recheck) → 503', async () => {
+    const { auth, tokenFor } = fakeAuth({ user: approvedUser });
+    const srv = await serve(auth);
+    try {
+        // First request succeeds and caches session s1
+        assert.equal((await get(`${srv.url}/u`, tokenFor('user', 's1'))).status, 200);
+
+        // Now the store starts throwing on get()
+        const customStore = {
+            get: async () => { throw new Error('supabase down'); },
+            bust() {},
+        };
+        const auth2 = createAuthMiddleware({
+            verify: async () => ({ userId: 'user', sessionId: 's2' }),
+            profiles: customStore,
+        });
+        const app = express();
+        app.get('/u', ...auth2.requireUser, (req, res) => res.json({ ok: true }));
+        const srv2 = await listen(app);
+        try {
+            const res = await get(`${srv2.url}/u`, 'anything');
+            assert.equal(res.status, 503);
+            assert.equal((await res.json()).code, 'auth_unavailable');
+        } finally { await srv2.close(); }
+    } finally { await srv.close(); }
+});
