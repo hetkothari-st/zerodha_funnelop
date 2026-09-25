@@ -27,7 +27,7 @@ const app = createApp({
     routers: [
         createKiteRouter({
             config, auth, kiteSession,
-            stateStore: createStateStore(),
+            stateStore: createStateStore({ secret: config.hubSharedSecret }),
             hub: createHubClient({ hubUrl: config.hubUrl, secret: config.hubSharedSecret }),
         }),
         createAdminRouter({
