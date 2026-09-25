@@ -78,3 +78,57 @@ test('Zerodha: paste access token', async () => {
     await userEvent.click(screen.getByRole('button', { name: 'Set token' }));
     expect(auth.apiFetch).toHaveBeenCalledWith('/api/set-access-token', { method: 'POST', body: { access_token: 'tok123' } });
 });
+
+test('a stale pending response does not overwrite the Approved tab after switching', async () => {
+    const approvedUser = { id: '33333333-3333-4333-8333-333333333333', full_name: 'Bina', email: 'bina@example.com', phone: '+919876543211', signup_provider: 'email', created_at: '2026-09-25T10:00:00Z' };
+    let resolvePending;
+    const pendingPromise = new Promise((resolve) => { resolvePending = resolve; });
+    auth.apiFetch = vi.fn(async (path, opts = {}) => {
+        const key = `${opts.method || 'GET'} ${path}`;
+        if (key === 'GET /api/admin/users?status=pending') return pendingPromise;
+        if (key === 'GET /api/admin/users?status=approved') return { ok: true, status: 200, data: { users: [approvedUser] } };
+        if (key === 'GET /api/kite-config') return { ok: true, status: 200, data: { configured: false } };
+        return { ok: true, status: 200, data: { ok: true } };
+    });
+    render(<AdminPage />);
+    await waitFor(() => expect(auth.apiFetch).toHaveBeenCalledWith('/api/admin/users?status=pending'));
+    await userEvent.click(screen.getByRole('tab', { name: 'Approved' }));
+    expect(await screen.findByText('Bina')).toBeInTheDocument();
+    // Resolve the stale pending request now that Approved is showing; it must not clobber the view.
+    resolvePending({ ok: true, status: 200, data: { users: [pendingUser] } });
+    await waitFor(() => {
+        expect(screen.getByText('Bina')).toBeInTheDocument();
+        expect(screen.queryByText('Asha')).not.toBeInTheDocument();
+    });
+});
+
+test('double-clicking Approve only sends one approve request', async () => {
+    render(<AdminPage />);
+    const button = await screen.findByRole('button', { name: 'Approve Asha' });
+    await userEvent.click(button);
+    await userEvent.click(button);
+    const approveCalls = auth.apiFetch.mock.calls.filter(([path]) => path === `/api/admin/users/${pendingUser.id}/approve`);
+    expect(approveCalls.length).toBe(1);
+});
+
+test('Zerodha: two quick clicks on Connect Zerodha only call login-url once', async () => {
+    let resolveLogin;
+    const loginPromise = new Promise((resolve) => { resolveLogin = resolve; });
+    auth.apiFetch = vi.fn(async (path, opts = {}) => {
+        const key = `${opts.method || 'GET'} ${path}`;
+        if (key === 'POST /api/admin/kite/login-url') return loginPromise;
+        if (key.startsWith('GET /api/admin/users')) return { ok: true, status: 200, data: { users: [pendingUser] } };
+        if (key === 'GET /api/kite-config') return { ok: true, status: 200, data: { configured: false } };
+        return { ok: true, status: 200, data: { ok: true } };
+    });
+    const { nav } = await import('./ZerodhaSection');
+    const go = vi.spyOn(nav, 'go').mockImplementation(() => {});
+    render(<AdminPage />);
+    const button = await screen.findByRole('button', { name: 'Connect Zerodha' });
+    await userEvent.click(button);
+    await userEvent.click(button);
+    resolveLogin({ ok: true, status: 200, data: { ok: true, url: 'https://kite.zerodha.com/connect/login?v=3&api_key=k' } });
+    await waitFor(() => expect(go).toHaveBeenCalledTimes(1));
+    const loginCalls = auth.apiFetch.mock.calls.filter(([path]) => path === '/api/admin/kite/login-url');
+    expect(loginCalls.length).toBe(1);
+});

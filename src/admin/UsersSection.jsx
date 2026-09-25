@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { theme } from '../auth/theme';
 
 const TABS = [{ value: 'pending', label: 'Pending' }, { value: 'approved', label: 'Approved' }, { value: 'rejected', label: 'Rejected' }];
@@ -10,10 +10,16 @@ export default function UsersSection({ apiFetch }) {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
     const [busyId, setBusyId] = useState(null);
+    // Bumped on every load() call so a response from a superseded request (e.g. the
+    // previous tab's still-in-flight fetch) can be told apart from the latest one and ignored.
+    const requestIdRef = useRef(0);
 
     const load = useCallback(async () => {
+        const requestId = ++requestIdRef.current;
+        const requestStatus = status;
         setLoading(true); setError(null);
-        const r = await apiFetch(`/api/admin/users?status=${status}`);
+        const r = await apiFetch(`/api/admin/users?status=${requestStatus}`);
+        if (requestIdRef.current !== requestId) return; // a newer request superseded this one; drop the stale response
         setLoading(false);
         if (r.ok) setUsers(r.data.users || []); else setError(r.message);
     }, [apiFetch, status]);
@@ -21,6 +27,7 @@ export default function UsersSection({ apiFetch }) {
     useEffect(() => { load(); }, [load]);
 
     async function act(user, action) {
+        if (busyId) return;
         setBusyId(user.id); setError(null);
         const r = await apiFetch(`/api/admin/users/${user.id}/${action}`, { method: 'POST' });
         setBusyId(null);
