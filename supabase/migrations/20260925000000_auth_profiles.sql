@@ -13,14 +13,14 @@ create table public.profiles (
     current_session_id uuid,
     created_at         timestamptz not null default now(),
     approved_at        timestamptz,
-    approved_by        uuid references auth.users(id)
+    approved_by        uuid references auth.users(id) on delete set null
 );
 create index profiles_status_created_idx on public.profiles (status, created_at desc);
 
 create table public.admin_audit_log (
     id         bigserial primary key,
-    admin_id   uuid not null references auth.users(id),
-    target_id  uuid not null references auth.users(id),
+    admin_id   uuid references auth.users(id) on delete set null,
+    target_id  uuid references auth.users(id) on delete set null,
     action     text not null check (action in ('approve', 'reject', 'make_admin', 'revoke_admin')),
     created_at timestamptz not null default now()
 );
@@ -38,17 +38,23 @@ revoke all on public.profiles from anon, authenticated;
 grant select on public.profiles to authenticated;
 grant update (full_name) on public.profiles to authenticated;
 revoke all on public.admin_audit_log from anon, authenticated;
+revoke all on sequence public.admin_audit_log_id_seq from anon, authenticated;
 
 -- New auth user → pending profile.
 create function public.handle_new_user() returns trigger
 language plpgsql security definer set search_path = '' as $$
 begin
-    insert into public.profiles (id, full_name, email, signup_provider)
+    insert into public.profiles (id, full_name, email, signup_provider, phone)
     values (
         new.id,
         coalesce(new.raw_user_meta_data ->> 'full_name', new.raw_user_meta_data ->> 'name', ''),
         coalesce(new.email, ''),
-        coalesce(new.raw_app_meta_data ->> 'provider', 'email')
+        coalesce(new.raw_app_meta_data ->> 'provider', 'email'),
+        case
+            when new.phone_confirmed_at is not null and coalesce(new.phone, '') <> ''
+                then '+' || ltrim(new.phone, '+')
+            else null
+        end
     );
     return new;
 end $$;
@@ -56,6 +62,8 @@ end $$;
 create trigger on_auth_user_created
     after insert on auth.users
     for each row execute function public.handle_new_user();
+
+revoke execute on function public.handle_new_user() from public, anon, authenticated;
 
 -- Keep profile email/phone in sync with verified auth values (phone stored as E.164 with '+').
 create function public.sync_profile_contact() returns trigger
@@ -75,6 +83,8 @@ end $$;
 create trigger on_auth_user_contact_changed
     after update of email, phone, phone_confirmed_at on auth.users
     for each row execute function public.sync_profile_contact();
+
+revoke execute on function public.sync_profile_contact() from public, anon, authenticated;
 
 -- Called by the client right after sign-in: this session now owns the account.
 create function public.claim_session() returns void
