@@ -11,3 +11,8 @@ export function reconnectPolicy(code) {
     if (code === HUB_CLOSE.notApproved) return 'stop';
     return 'retry';
 }
+
+// Capped exponential backoff for 'retry' closes: 3s, 6s, 12s, … max 60s.
+export function nextRetryDelay(attempt) {
+    return Math.min(3000 * 2 ** attempt, 60000);
+}

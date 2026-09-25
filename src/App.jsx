@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Database, Plus, Trash2, LayoutGrid, Monitor, Eye, EyeOff, CheckSquare, Square, PanelLeftClose, PanelLeft, Columns, LogIn } from 'lucide-react';
+import { Database, Plus, Trash2, LayoutGrid, Monitor, Eye, EyeOff, CheckSquare, Square, PanelLeftClose, PanelLeft, Columns, LogOut, Shield } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useMarketData } from './hooks/useMarketData';
+import { useAuth } from './auth/AuthProvider';
 import MonitorDashboard from './components/MonitorDashboard';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
@@ -12,6 +13,7 @@ function cn(...inputs) {
 }
 
 const App = () => {
+    const auth = useAuth();
 
     // --- Market Auto-Reconnect on market open ---
     const prevMarketOpenRef = useRef(false);
@@ -77,50 +79,6 @@ const App = () => {
     }, [monitorLayouts]);
 
     const [activeNotifications, setActiveNotifications] = useState([]);
-    const [requestToken, setRequestToken] = useState('');
-    const [tokenExchangeState, setTokenExchangeState] = useState('idle');
-    const [accessToken, setAccessToken] = useState('');
-    const [accessTokenState, setAccessTokenState] = useState('idle'); // idle | loading | error
-
-    const handleSetAccessToken = useCallback(async () => {
-        if (!accessToken.trim()) return;
-        setAccessTokenState('loading');
-        try {
-            const res = await fetch("/api/set-access-token", {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ access_token: accessToken.trim() }),
-            });
-            const data = await res.json();
-            if (!data.ok) { setAccessTokenState('error'); return; }
-            localStorage.setItem('kite_access_token', data.access_token);
-            setAccessToken('');
-            setAccessTokenState('idle');
-            setIsWsEnabled(true);
-        } catch {
-            setAccessTokenState('error');
-        }
-    }, [accessToken]);
-
-    const handleExchangeToken = useCallback(async () => {
-        if (!requestToken.trim()) return;
-        setTokenExchangeState('loading');
-        try {
-            const res = await fetch("/api/exchange-token", {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ request_token: requestToken.trim() }),
-            });
-            const data = await res.json();
-            if (!data.ok) { setTokenExchangeState('error'); return; }
-            localStorage.setItem('kite_access_token', data.access_token);
-            setRequestToken('');
-            setTokenExchangeState('idle');
-            setIsWsEnabled(true);
-        } catch {
-            setTokenExchangeState('error');
-        }
-    }, [requestToken]);
 
     // --- WebSocket Centralization ---
     const addDebug = useCallback((msg) => {
@@ -145,7 +103,7 @@ const App = () => {
         depthEvents.current.dispatchEvent(new CustomEvent('depth-packet', { detail: packet }));
     }, []);
 
-    const { status, depthData, subscribe } = useMarketData(isWsEnabled, handleRawMessage, handleDepthPacket);
+    const { status, depthData, subscribe } = useMarketData(isWsEnabled, handleRawMessage, handleDepthPacket, { accessToken: auth.accessToken, onSignedInElsewhere: auth.markDisplaced });
 
     // --- Market Auto-Reconnect ---
     useEffect(() => {
@@ -281,62 +239,20 @@ const App = () => {
                             {isWsEnabled ? "Disconnect" : "Connect"}
                         </button>
                     </div>
+                    <div className="mt-2 flex items-center justify-between text-[10px] text-white/50">
+                        <span className="truncate" title={auth.profile?.email || ''}>{auth.profile?.full_name || auth.profile?.email}</span>
+                        <div className="flex items-center gap-2">
+                            {auth.profile?.role === 'admin' && <a href="/admin" className="text-[#38bdf8] hover:underline">Admin</a>}
+                            <button type="button" onClick={() => auth.signOut()} className="inline-flex items-center gap-1 hover:text-white" aria-label="Sign out"><LogOut size={10} /> Sign out</button>
+                        </div>
+                    </div>
                     {(status === 'error' || status === 'disconnected') && (
-                        <div className="mt-2 space-y-1.5">
-                            {/* Direct access_token paste */}
-                            <div className="flex gap-1">
-                                <input
-                                    type="text"
-                                    value={accessToken}
-                                    onChange={e => { setAccessToken(e.target.value); setAccessTokenState('idle'); }}
-                                    onKeyDown={e => e.key === 'Enter' && handleSetAccessToken()}
-                                    placeholder="Paste access_token…"
-                                    className={cn(
-                                        "flex-1 min-w-0 bg-white/5 border rounded px-2 py-1 text-[9px] font-mono text-white/70 placeholder-white/20 outline-none focus:border-white/30 transition-colors",
-                                        accessTokenState === 'error' ? "border-red-500/50" : "border-emerald-500/20"
-                                    )}
-                                />
-                                <button
-                                    onClick={handleSetAccessToken}
-                                    disabled={!accessToken.trim() || accessTokenState === 'loading'}
-                                    className="px-2 py-1 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[9px] font-bold hover:bg-emerald-500/20 transition-all disabled:opacity-30"
-                                >
-                                    {accessTokenState === 'loading' ? '…' : 'SET'}
-                                </button>
-                            </div>
-                            {accessTokenState === 'error' && (
-                                <p className="text-[9px] text-red-400/70 px-1">Failed. Check token.</p>
-                            )}
-                            <div className="border-t border-white/5 pt-1.5" />
-                            <a
-                                href={"/kite/login"}
-                                className="w-full flex items-center justify-center gap-1.5 py-1.5 rounded-lg bg-[#387ed1]/10 border border-[#387ed1]/30 text-[#387ed1] text-[10px] font-bold uppercase tracking-wider hover:bg-[#387ed1]/20 transition-all"
-                            >
-                                <LogIn size={10} />
-                                Login with Zerodha
-                            </a>
-                            <div className="flex gap-1">
-                                <input
-                                    type="text"
-                                    value={requestToken}
-                                    onChange={e => { setRequestToken(e.target.value); setTokenExchangeState('idle'); }}
-                                    onKeyDown={e => e.key === 'Enter' && handleExchangeToken()}
-                                    placeholder="Paste request_token…"
-                                    className={cn(
-                                        "flex-1 min-w-0 bg-white/5 border rounded px-2 py-1 text-[9px] font-mono text-white/70 placeholder-white/20 outline-none focus:border-white/30 transition-colors",
-                                        tokenExchangeState === 'error' ? "border-red-500/50" : "border-white/10"
-                                    )}
-                                />
-                                <button
-                                    onClick={handleExchangeToken}
-                                    disabled={!requestToken.trim() || tokenExchangeState === 'loading'}
-                                    className="px-2 py-1 rounded bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-[9px] font-bold hover:bg-emerald-500/20 transition-all disabled:opacity-30"
-                                >
-                                    {tokenExchangeState === 'loading' ? '…' : 'GO'}
-                                </button>
-                            </div>
-                            {tokenExchangeState === 'error' && (
-                                <p className="text-[9px] text-red-400/70 px-1">Exchange failed. Check token.</p>
+                        <div className="mt-2 space-y-1.5 text-[10px] text-white/50">
+                            <p>Live data is unavailable right now.</p>
+                            {auth.profile?.role === 'admin' && (
+                                <a href="/admin" className="inline-flex items-center gap-1 font-bold text-[#38bdf8] hover:underline">
+                                    <Shield size={10} /> Open admin to reconnect Zerodha
+                                </a>
                             )}
                         </div>
                     )}

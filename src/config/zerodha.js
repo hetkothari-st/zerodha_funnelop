@@ -12,7 +12,7 @@
 export const ZERODHA_CONFIG = {
     API_KEY: import.meta.env.VITE_ZERODHA_API_KEY || '',
     get ACCESS_TOKEN() {
-        return localStorage.getItem('kite_access_token') || import.meta.env.VITE_ZERODHA_ACCESS_TOKEN || '';
+        return ''; // Kite tokens live only on the server and ws-hub.
     },
 
     // WebSocket endpoint (do not change)
