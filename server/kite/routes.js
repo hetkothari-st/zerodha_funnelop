@@ -1,6 +1,7 @@
 import express from 'express';
 import crypto from 'crypto';
 import { sendError } from '../auth/errors.js';
+import { wrap } from '../auth/middleware.js';
 
 const KITE_LOGIN = 'https://kite.zerodha.com/connect/login';
 const KITE_TOKEN = 'https://api.kite.trade/session/token';
@@ -34,14 +35,14 @@ export function createKiteRouter({ config, auth, kiteSession, stateStore, hub, f
         res.json({ configured: Boolean(config.kiteApiKey && kiteSession.accessToken) });
     });
 
-    router.post('/api/set-access-token', ...auth.requireAdmin, async (req, res) => {
+    router.post('/api/set-access-token', ...auth.requireAdmin, wrap(async (req, res) => {
         const token = bodyString(req, 'access_token');
         if (!token) return sendError(res, 'bad_request', 'access_token required');
         await adopt(token);
         res.json({ ok: true });
-    });
+    }));
 
-    router.post('/api/exchange-token', ...auth.requireAdmin, async (req, res) => {
+    router.post('/api/exchange-token', ...auth.requireAdmin, wrap(async (req, res) => {
         const requestToken = bodyString(req, 'request_token');
         if (!requestToken) return sendError(res, 'bad_request', 'request_token required');
         if (!config.kiteApiKey || !config.kiteApiSecret) return sendError(res, 'kite_error', 'ZERODHA_API_KEY or ZERODHA_API_SECRET not configured');
@@ -51,9 +52,9 @@ export function createKiteRouter({ config, auth, kiteSession, stateStore, hub, f
         } catch (err) {
             sendError(res, 'kite_error', err.message);
         }
-    });
+    }));
 
-    router.post('/api/admin/kite/login-url', ...auth.requireAdmin, async (req, res) => {
+    router.post('/api/admin/kite/login-url', ...auth.requireAdmin, wrap(async (req, res) => {
         if (!config.kiteApiKey) return sendError(res, 'kite_error', 'ZERODHA_API_KEY not configured');
         const state = stateStore.issue();
         const url = `${KITE_LOGIN}?v=3&api_key=${encodeURIComponent(config.kiteApiKey)}&redirect_params=${encodeURIComponent(`state=${state}`)}`;
@@ -69,10 +70,10 @@ export function createKiteRouter({ config, auth, kiteSession, stateStore, hub, f
             console.warn('[kite] Could not pre-check Kite login:', err.message);
         }
         res.json({ ok: true, url });
-    });
+    }));
 
     // Browser redirect from Zerodha: no Bearer header is possible, so the one-time state is the proof.
-    router.get('/kite/callback', async (req, res) => {
+    router.get('/kite/callback', wrap(async (req, res) => {
         const { request_token: requestToken, status, state } = req.query;
         if (!stateStore.consume(typeof state === 'string' ? state : '')) return res.redirect('/admin?kite=expired');
         if (status !== 'success' || typeof requestToken !== 'string' || !requestToken) return res.redirect('/admin?kite=failed');
@@ -83,7 +84,7 @@ export function createKiteRouter({ config, auth, kiteSession, stateStore, hub, f
             console.error('[kite] Token exchange failed:', err.message);
             return res.redirect('/admin?kite=failed');
         }
-    });
+    }));
 
     return router;
 }
