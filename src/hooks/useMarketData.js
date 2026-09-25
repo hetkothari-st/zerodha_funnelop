@@ -269,6 +269,11 @@ export const useMarketData = (enabled = true, onMessage = null, onDepthPacket = 
 
     // ── Connect ──────────────────────────────────────────────────
     const connect = useCallback(() => {
+        // Guard against a stray scheduled reconnect firing after unmount/disable.
+        if (!enabledRef.current) return;
+        // Already connecting or connected — don't tear down and replace it.
+        if (ws.current && (ws.current.readyState === WebSocket.CONNECTING || ws.current.readyState === WebSocket.OPEN)) return;
+
         // Connect to ws-hub on same hostname (port 8765) by default.
         // Hub holds the single Zerodha connection and relays to all clients.
         // VITE_WS_HUB_URL can override (e.g. different host/port).
@@ -295,7 +300,9 @@ export const useMarketData = (enabled = true, onMessage = null, onDepthPacket = 
             console.log('[KiteWS] Connected');
             setStatus('connected');
             isReady.current = true;
-            reconnectAttempt.current = 0;
+            // Do NOT reset reconnectAttempt here — an app-level close (e.g. 4401) can
+            // arrive immediately after open, before the connection proves healthy.
+            // The backoff only resets once a message is actually received (below).
 
             // Re-subscribe all active tokens + flush pending
             const allTokens = [
@@ -338,6 +345,8 @@ export const useMarketData = (enabled = true, onMessage = null, onDepthPacket = 
         };
 
         ws.current.onmessage = (event) => {
+            // Any message (text or binary) proves the connection is healthy — reset the backoff.
+            reconnectAttempt.current = 0;
             try {
                 // ── Text message (JSON) — order updates, errors ──
                 if (typeof event.data === 'string') {
@@ -453,11 +462,6 @@ export const useMarketData = (enabled = true, onMessage = null, onDepthPacket = 
 
     }, [loadInstrumentMap, resolveInstrumentToken, resolveAppToken]);
 
-    // A first token (after sign-in) should trigger a connect when enabled and currently disconnected.
-    useEffect(() => {
-        if (enabled && accessToken && (!ws.current || ws.current.readyState === WebSocket.CLOSED)) connect();
-    }, [enabled, Boolean(accessToken)]); // eslint-disable-line react-hooks/exhaustive-deps
-
     // ── Watchdog: resubscribe stale tokens ───────────────────────
     useEffect(() => {
         if (!enabled) return;
@@ -517,25 +521,39 @@ export const useMarketData = (enabled = true, onMessage = null, onDepthPacket = 
     }, [resolveInstrumentToken]);
 
     // ── Init Effect ──────────────────────────────────────────────
+    // Single owner of (re)connecting: fires when enabled or the token's presence
+    // changes. A first token arriving while already enabled is handled here too —
+    // there is no separate "token arrived" effect, so mount-with-token and
+    // token-arrives-later both create exactly one socket.
+    const hasToken = Boolean(accessToken);
+    const teardown = useCallback(() => {
+        enabledRef.current = false;
+        if (ws.current) {
+            ws.current.onclose = null;
+            ws.current.onmessage = null;
+            ws.current.onerror = null;
+            ws.current.close();
+            ws.current = null;
+        }
+        if (reconnectTimeout.current) {
+            clearTimeout(reconnectTimeout.current);
+            reconnectTimeout.current = null;
+        }
+    }, []);
+
     useEffect(() => {
-        if (enabled) {
+        if (enabled && hasToken) {
+            enabledRef.current = true;
+            reconnectAttempt.current = 0;
             connect();
         } else {
-            if (ws.current) {
-                ws.current.close();
-                ws.current = null;
-            }
-            if (reconnectTimeout.current) {
-                clearTimeout(reconnectTimeout.current);
-                reconnectTimeout.current = null;
-            }
+            teardown();
             setStatus('disconnected');
         }
         return () => {
-            if (ws.current) ws.current.close();
-            if (reconnectTimeout.current) clearTimeout(reconnectTimeout.current);
+            teardown();
         };
-    }, [enabled, connect]);
+    }, [enabled, hasToken, connect, teardown]);
 
     return { status, depthData, subscribe };
 };
