@@ -6,6 +6,10 @@ BASE="${1:?usage: security-check.sh <app-base-url> [hub-base-url]}"
 HUB="${2:-}"
 fail=0
 
+# Reachability guard: ensure server is responding
+code=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/")
+if [ "$code" != "200" ]; then echo "FAIL server unreachable at $BASE"; exit 1; fi
+
 expect() { # METHOD PATH EXPECTED_STATUS
     local code
     code=$(curl -s -o /dev/null -w '%{http_code}' -X "$1" "$BASE$2" -H 'Content-Type: application/json' --data '{}')
@@ -21,8 +25,25 @@ expect POST /api/login                  404
 expect POST /api/force-logout           404
 expect GET  /api/active-sessions        404
 
-if curl -s "$BASE/api/kite-config" | grep -q accessToken; then echo "FAIL /api/kite-config mentions accessToken"; fail=1; else echo "ok   /api/kite-config has no token"; fi
-if curl -s "$BASE/connect" | grep -q "Funnel Launcher"; then echo "FAIL /connect launcher still served"; fail=1; else echo "ok   /connect launcher gone"; fi
+# Verify unauthenticated path rejects leaks; authenticated response tested in test/kite.test.js
+resp=$(curl -s -w '\n%{http_code}' "$BASE/api/kite-config")
+body=$(echo "$resp" | head -n -1)
+status=$(echo "$resp" | tail -n 1)
+if [ "$status" = "401" ] && echo "$body" | grep -q '"code":"unauthenticated"' && ! echo "$body" | grep -qE 'accessToken|access_token'; then
+    echo "ok   /api/kite-config has no token"
+else
+    echo "FAIL /api/kite-config -> $status (expected 401 with unauthenticated error, no token)"
+    fail=1
+fi
+resp=$(curl -s -w '\n%{http_code}' "$BASE/connect")
+body=$(echo "$resp" | head -n -1)
+status=$(echo "$resp" | tail -n 1)
+if [ "$status" = "200" ] && [ -n "$body" ] && ! echo "$body" | grep -q "Funnel Launcher"; then
+    echo "ok   /connect launcher gone"
+else
+    echo "FAIL /connect -> $status (expected 200 with body, no launcher)"
+    fail=1
+fi
 
 loc=$(curl -s -o /dev/null -w '%{redirect_url}' "$BASE/kite/callback?request_token=x&status=success")
 case "$loc" in
