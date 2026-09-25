@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useAuth } from './AuthProvider';
 import SignIn from './screens/SignIn';
 import SignUp from './screens/SignUp';
@@ -19,6 +19,7 @@ const BY_SCREEN = { resetPassword: ResetPassword, linkExpired: LinkExpired, addE
 export default function AuthScreens() {
     const { screen } = useAuth();
     const [view, setView] = useState('signIn');
+    useEffect(() => { setView('signIn'); }, [screen]);
     if (screen === 'signIn') {
         if (view === 'signUp') return <SignUp onSwitch={setView} />;
         if (view === 'forgot') return <ForgotPassword onBack={() => setView('signIn')} />;

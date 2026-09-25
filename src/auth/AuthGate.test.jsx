@@ -33,3 +33,9 @@ test('displaced shows the modal over the app and "Sign in here" signs out locall
     await userEvent.click(screen.getByRole('button', { name: 'Sign in here' }));
     expect(auth.signOutHere).toHaveBeenCalled();
 });
+
+test('displaced modal autofocuses the "Sign in here" button', () => {
+    auth = { ...base, screen: 'app', displaced: true };
+    render(<AuthGate><p>the app</p></AuthGate>);
+    expect(screen.getByRole('button', { name: 'Sign in here' })).toHaveFocus();
+});

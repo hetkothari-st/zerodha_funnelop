@@ -15,19 +15,29 @@ export default function PhoneOtpForm({ sendCode, verifyCode, idPrefix = 'otp' })
         const e164 = toIndianE164(phoneInput);
         if (!e164) { setError('Enter a valid 10-digit Indian mobile number.'); return; }
         setBusy(true); setError(null);
-        const r = await sendCode(e164);
-        setBusy(false);
-        if (r.error) { setError(r.error); return; }
-        setPhone(e164);
+        try {
+            const r = await sendCode(e164);
+            if (r.error) { setError(r.error); return; }
+            setPhone(e164);
+        } catch {
+            setError('Something went wrong. Please try again.');
+        } finally {
+            setBusy(false);
+        }
     }
 
     async function onVerify(e) {
         e.preventDefault();
         if (!isOtp(code)) { setError('Enter the 6-digit code.'); return; }
         setBusy(true); setError(null);
-        const r = await verifyCode(phone, code.trim());
-        setBusy(false);
-        if (r.error) setError(r.error);
+        try {
+            const r = await verifyCode(phone, code.trim());
+            if (r.error) setError(r.error);
+        } catch {
+            setError('Something went wrong. Please try again.');
+        } finally {
+            setBusy(false);
+        }
     }
 
     if (!phone) {

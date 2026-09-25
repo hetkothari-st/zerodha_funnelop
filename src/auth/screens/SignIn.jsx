@@ -14,27 +14,46 @@ export default function SignIn({ onSwitch, onForgot }) {
     const [code, setCode] = useState(null);
     const [info, setInfo] = useState(null);
     const [busy, setBusy] = useState(false);
+    const [googleBusy, setGoogleBusy] = useState(false);
+    const [resendBusy, setResendBusy] = useState(false);
 
     async function onSubmit(e) {
         e.preventDefault();
         if (!isEmail(email)) { setError('Enter a valid email address.'); return; }
         if (!password) { setError('Enter your password.'); return; }
         setBusy(true); setError(null); setInfo(null);
-        const r = await auth.signInWithPassword(email.trim(), password);
-        setBusy(false);
-        setError(r.error); setCode(r.code);
+        try {
+            const r = await auth.signInWithPassword(email.trim(), password);
+            setError(r.error); setCode(r.code);
+        } catch {
+            setError('Something went wrong. Please try again.');
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    async function onGoogle() {
+        setGoogleBusy(true);
+        try { await auth.signInWithGoogle(); } catch { /* redirect-based flow; nothing to show here */ } finally { setGoogleBusy(false); }
     }
 
     async function onResend() {
-        const r = await auth.resendSignupEmail(email.trim());
-        if (r.error) setError(r.error); else { setError(null); setCode(null); setInfo('Verification email sent. Check your inbox.'); }
+        setResendBusy(true);
+        try {
+            const r = await auth.resendSignupEmail(email.trim());
+            if (r.error) setError(r.error); else { setError(null); setCode(null); setInfo('Verification email sent. Check your inbox.'); }
+        } catch {
+            setError('Something went wrong. Please try again.');
+        } finally {
+            setResendBusy(false);
+        }
     }
 
     return (
         <div className="flex flex-col gap-4">
             <theme.Wordmark />
             <Title title="Sign in" subtitle={theme.tagline} />
-            <GoogleButton onClick={() => auth.signInWithGoogle()} />
+            <GoogleButton busy={googleBusy} onClick={onGoogle} />
             <Divider />
             <Tabs value={tab} onChange={(v) => { setTab(v); setError(null); }} options={[{ value: 'email', label: 'Email' }, { value: 'mobile', label: 'Mobile OTP' }]} />
             {tab === 'email' ? (
@@ -43,7 +62,7 @@ export default function SignIn({ onSwitch, onForgot }) {
                     <Field id="signin-password" label="Password" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />
                     <div className="flex justify-end"><TextButton onClick={onForgot}>Forgot password?</TextButton></div>
                     <Notice>{error}</Notice>
-                    {code === 'email_not_confirmed' && <TextButton onClick={onResend}>Resend verification email</TextButton>}
+                    {code === 'email_not_confirmed' && <TextButton disabled={resendBusy} onClick={onResend}>Resend verification email</TextButton>}
                     <Notice kind="info">{info}</Notice>
                     <PrimaryButton busy={busy}>Sign in</PrimaryButton>
                 </form>

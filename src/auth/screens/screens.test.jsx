@@ -141,3 +141,82 @@ test('Waitlist polls the profile every 30 s', async () => {
     expect(auth.refreshProfile).toHaveBeenCalledTimes(2);
     vi.useRealTimers();
 });
+
+test('Waitlist keeps a single 30 s interval when the auth object changes on rerender', async () => {
+    vi.useFakeTimers();
+    const { rerender } = render(<Waitlist />);
+    await act(async () => { vi.advanceTimersByTime(15000); });
+    expect(auth.refreshProfile).not.toHaveBeenCalled();
+    const newRefreshProfile = vi.fn(ok);
+    auth = { ...auth, refreshProfile: newRefreshProfile };
+    rerender(<Waitlist />);
+    await act(async () => { vi.advanceTimersByTime(15000); });
+    expect(newRefreshProfile).toHaveBeenCalledTimes(1);
+    vi.useRealTimers();
+});
+
+test('SignUp check-your-inbox: resend shows a server error, then a confirmation', async () => {
+    auth.resendSignupEmail = vi.fn(() => Promise.resolve({ error: 'Too many requests.' }));
+    render(<SignUp onSwitch={() => {}} />);
+    await userEvent.type(screen.getByLabelText('Full name'), 'Asha');
+    await userEvent.type(screen.getByLabelText('Email'), 'a@b.in');
+    await userEvent.type(screen.getByLabelText('Password'), 'abcd1234');
+    await userEvent.click(screen.getByRole('button', { name: 'Create account' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Resend email' }));
+    expect(auth.resendSignupEmail).toHaveBeenCalledWith('a@b.in');
+    expect(await screen.findByRole('alert')).toHaveTextContent('Too many requests.');
+
+    auth.resendSignupEmail = vi.fn(ok);
+    await userEvent.click(screen.getByRole('button', { name: 'Resend email' }));
+    expect(await screen.findByText('Sent again to a@b.in.')).toBeInTheDocument();
+});
+
+test('SignIn: a rejected sign-in re-enables the button and shows a generic error', async () => {
+    auth.signInWithPassword = vi.fn(() => Promise.reject(new Error('network down')));
+    render(<SignIn onSwitch={() => {}} onForgot={() => {}} />);
+    await userEvent.type(screen.getByLabelText('Email'), 'a@b.in');
+    await userEvent.type(screen.getByLabelText('Password'), 'abcd1234');
+    const button = screen.getByRole('button', { name: 'Sign in' });
+    await userEvent.click(button);
+    expect(await screen.findByRole('alert')).toHaveTextContent('Something went wrong. Please try again.');
+    expect(button).not.toBeDisabled();
+});
+
+test('SignIn: the Google button is busy while the redirect is pending', async () => {
+    let resolveGoogle;
+    auth.signInWithGoogle = vi.fn(() => new Promise((res) => { resolveGoogle = res; }));
+    render(<SignIn onSwitch={() => {}} onForgot={() => {}} />);
+    const button = screen.getByRole('button', { name: 'Continue with Google' });
+    await userEvent.click(button);
+    expect(button).toBeDisabled();
+    await act(async () => { resolveGoogle({ error: null }); });
+    expect(button).not.toBeDisabled();
+});
+
+test('VerifyEmail: buttons are guarded against double clicks', async () => {
+    let resolveRefresh;
+    auth.refreshUser = vi.fn(() => new Promise((res) => { resolveRefresh = res; }));
+    render(<VerifyEmail />);
+    const verifiedBtn = screen.getByRole('button', { name: "I've verified" });
+    const resendBtn = screen.getByRole('button', { name: 'Resend email' });
+    await userEvent.click(verifiedBtn);
+    expect(resendBtn).toBeDisabled();
+    await act(async () => { resolveRefresh({ error: null }); });
+    expect(resendBtn).not.toBeDisabled();
+});
+
+test('SignIn: the inline resend button guards against double clicks', async () => {
+    auth.signInWithPassword = vi.fn(() => Promise.resolve({ error: 'Please verify your email first. Check your inbox.', code: 'email_not_confirmed' }));
+    let resolveResend;
+    auth.resendSignupEmail = vi.fn(() => new Promise((res) => { resolveResend = res; }));
+    render(<SignIn onSwitch={() => {}} onForgot={() => {}} />);
+    await userEvent.type(screen.getByLabelText('Email'), 'a@b.in');
+    await userEvent.type(screen.getByLabelText('Password'), 'abcd1234');
+    await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+    const resendBtn = await screen.findByRole('button', { name: 'Resend verification email' });
+    await userEvent.click(resendBtn);
+    expect(resendBtn).toBeDisabled();
+    await userEvent.click(resendBtn);
+    await act(async () => { resolveResend({ error: null }); });
+    expect(auth.resendSignupEmail).toHaveBeenCalledTimes(1);
+});

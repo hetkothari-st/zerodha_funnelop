@@ -14,9 +14,14 @@ export default function ForgotPassword({ onBack }) {
         e.preventDefault();
         if (!isEmail(email)) { setError('Enter a valid email address.'); return; }
         setBusy(true); setError(null);
-        const r = await auth.sendPasswordReset(email.trim());
-        setBusy(false);
-        if (r.error) setError(r.error); else setSent(true);
+        try {
+            const r = await auth.sendPasswordReset(email.trim());
+            if (r.error) setError(r.error); else setSent(true);
+        } catch {
+            setError('Something went wrong. Please try again.');
+        } finally {
+            setBusy(false);
+        }
     }
 
     return (

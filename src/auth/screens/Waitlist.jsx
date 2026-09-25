@@ -1,14 +1,16 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { useAuth } from '../AuthProvider';
 import { theme } from '../theme';
 import { Title, Notice, TextButton } from '../ui';
 
 export default function Waitlist() {
     const auth = useAuth();
+    const authRef = useRef(auth);
+    authRef.current = auth;
     useEffect(() => {
-        const id = setInterval(() => { auth.refreshProfile(); }, 30000);
+        const id = setInterval(() => { authRef.current.refreshProfile(); }, 30000);
         return () => clearInterval(id);
-    }, [auth]);
+    }, []);
     return (
         <div className="flex flex-col gap-4">
             <theme.Wordmark />

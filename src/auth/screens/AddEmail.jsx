@@ -15,9 +15,14 @@ export default function AddEmail() {
         if (!name.trim()) { setError('Enter your name.'); return; }
         if (!isEmail(email)) { setError('Enter a valid email address.'); return; }
         setBusy(true); setError(null);
-        const r = await auth.addEmail({ name: name.trim(), email: email.trim() });
-        setBusy(false);
-        if (r.error) setError(r.error);
+        try {
+            const r = await auth.addEmail({ name: name.trim(), email: email.trim() });
+            if (r.error) setError(r.error);
+        } catch {
+            setError('Something went wrong. Please try again.');
+        } finally {
+            setBusy(false);
+        }
     }
 
     return (

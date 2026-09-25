@@ -12,8 +12,10 @@ export default function SignUp({ onSwitch }) {
     const [email, setEmail] = useState('');
     const [password, setPassword] = useState('');
     const [error, setError] = useState(null);
+    const [info, setInfo] = useState(null);
     const [sentTo, setSentTo] = useState(null);
     const [busy, setBusy] = useState(false);
+    const [googleBusy, setGoogleBusy] = useState(false);
 
     async function onSubmit(e) {
         e.preventDefault();
@@ -22,10 +24,29 @@ export default function SignUp({ onSwitch }) {
         const problem = passwordProblem(password);
         if (problem) { setError(problem); return; }
         setBusy(true); setError(null);
-        const r = await auth.signUpWithEmail({ name: name.trim(), email: email.trim(), password });
-        setBusy(false);
-        if (r.error) { setError(r.error); return; }
-        setSentTo(email.trim());
+        try {
+            const r = await auth.signUpWithEmail({ name: name.trim(), email: email.trim(), password });
+            if (r.error) { setError(r.error); return; }
+            setSentTo(email.trim());
+        } catch {
+            setError('Something went wrong. Please try again.');
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    async function onGoogle() {
+        setGoogleBusy(true);
+        try { await auth.signInWithGoogle(); } catch { /* redirect-based flow; nothing to show here */ } finally { setGoogleBusy(false); }
+    }
+
+    async function onResend() {
+        try {
+            const r = await auth.resendSignupEmail(sentTo);
+            if (r.error) setError(r.error); else { setError(null); setInfo(`Sent again to ${sentTo}.`); }
+        } catch {
+            setError('Something went wrong. Please try again.');
+        }
     }
 
     if (sentTo) {
@@ -33,7 +54,9 @@ export default function SignUp({ onSwitch }) {
             <div className="flex flex-col gap-4">
                 <theme.Wordmark />
                 <Title title="Check your inbox" subtitle={`We sent a verification link to ${sentTo}. Open it on this device to continue.`} />
-                <TextButton onClick={() => auth.resendSignupEmail(sentTo)}>Resend email</TextButton>
+                <Notice>{error}</Notice>
+                <Notice kind="info">{info}</Notice>
+                <TextButton onClick={onResend}>Resend email</TextButton>
                 <TextButton onClick={() => onSwitch('signIn')}>Back to sign in</TextButton>
             </div>
         );
@@ -43,7 +66,7 @@ export default function SignUp({ onSwitch }) {
         <div className="flex flex-col gap-4">
             <theme.Wordmark />
             <Title title="Create your account" subtitle={`Join the ${theme.productName} waitlist.`} />
-            <GoogleButton onClick={() => auth.signInWithGoogle()} />
+            <GoogleButton busy={googleBusy} onClick={onGoogle} />
             <Divider />
             <Tabs value={tab} onChange={(v) => { setTab(v); setError(null); }} options={[{ value: 'email', label: 'Email' }, { value: 'mobile', label: 'Mobile OTP' }]} />
             {tab === 'email' ? (

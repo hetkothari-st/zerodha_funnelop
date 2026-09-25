@@ -16,9 +16,14 @@ export default function ResetPassword() {
         if (problem) { setError(problem); return; }
         if (password !== confirm) { setError("Passwords don't match."); return; }
         setBusy(true); setError(null);
-        const r = await auth.updatePassword(password);
-        setBusy(false);
-        if (r.error) setError(r.error);
+        try {
+            const r = await auth.updatePassword(password);
+            if (r.error) setError(r.error);
+        } catch {
+            setError('Something went wrong. Please try again.');
+        } finally {
+            setBusy(false);
+        }
     }
 
     return (
