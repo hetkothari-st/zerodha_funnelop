@@ -4,6 +4,7 @@ import { sendError } from '../auth/errors.js';
 
 const KITE_LOGIN = 'https://kite.zerodha.com/connect/login';
 const KITE_TOKEN = 'https://api.kite.trade/session/token';
+const PRECHECK_TIMEOUT_MS = 5000;
 
 export function createKiteRouter({ config, auth, kiteSession, stateStore, hub, fetchImpl = fetch }) {
     const router = express.Router();
@@ -58,7 +59,7 @@ export function createKiteRouter({ config, auth, kiteSession, stateStore, hub, f
         const url = `${KITE_LOGIN}?v=3&api_key=${encodeURIComponent(config.kiteApiKey)}&redirect_params=${encodeURIComponent(`state=${state}`)}`;
         // Kite answers an expired/invalid key with bare JSON; report it instead of sending the admin there.
         try {
-            const check = await fetchImpl(url, { redirect: 'manual' });
+            const check = await fetchImpl(url, { redirect: 'manual', signal: AbortSignal.timeout(PRECHECK_TIMEOUT_MS) });
             if ((check.headers.get('content-type') || '').includes('application/json')) {
                 const body = await check.json().catch(() => ({}));
                 console.error('[kite] Login rejected by Kite:', body.message || check.status);

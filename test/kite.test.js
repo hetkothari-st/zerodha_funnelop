@@ -80,7 +80,7 @@ test('exchange-token: admin only; Kite failure → 502 kite_error', async () => 
 });
 
 test('login-url: returns Kite URL carrying a state nonce', async () => {
-    const { srv, as } = await setup();
+    const { srv, as, kite } = await setup();
     try {
         const body = await (await fetch(`${srv.url}/api/admin/kite/login-url`, { method: 'POST', headers: as('admin') })).json();
         const url = new URL(body.url);
@@ -89,6 +89,7 @@ test('login-url: returns Kite URL carrying a state nonce', async () => {
         const state = url.searchParams.get('redirect_params').slice('state='.length);
         assert.match(url.searchParams.get('redirect_params'), /^state=/);
         assert.match(state, STATE_FORMAT);
+        assert.ok(kite.calls[0].init.signal instanceof AbortSignal, 'pre-check fetch has a timeout signal');
     } finally { await srv.close(); }
 });
 
