@@ -19,6 +19,7 @@ test.each([
     ['rejected', { session: s(user()), profile: { status: 'rejected' } }, 'rejected'],
     ['pending', { session: s(user()), profile: { status: 'pending' } }, 'waitlist'],
     ['approved', { session: s(user()), profile: approved }, 'app'],
+    ['no session, startup failed', { session: null, startupError: true }, 'unavailable'],
 ])('%s', (_name, state, expected) => {
     expect(screenFor(state)).toBe(expected);
 });

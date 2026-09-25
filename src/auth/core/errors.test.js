@@ -16,3 +16,10 @@ test('unknown errors never leak raw text', () => {
 test('no error → null', () => {
     expect(friendlyError(null)).toBeNull();
 });
+test('more known codes map to friendly text', () => {
+    expect(friendlyError({ code: 'email_address_invalid' })).toBe('Enter a valid email address.');
+    expect(friendlyError({ code: 'session_not_found' })).toBe('Your session ended. Please sign in again.');
+});
+test('status 429 with no known code gets the rate-limit message', () => {
+    expect(friendlyError({ status: 429, message: 'Too Many Requests' })).toBe('Too many attempts. Please wait a minute and try again.');
+});

@@ -1,9 +1,9 @@
 // Decides which screen the sign-in gate shows. Order matters (see spec §4.3).
-export function screenFor({ loading, recovery, linkError, session, profile, profileError }) {
+export function screenFor({ loading, recovery, linkError, session, profile, profileError, startupError }) {
     if (loading) return 'loading';
     if (recovery) return 'resetPassword';
     if (linkError) return 'linkExpired';
-    if (!session) return 'signIn';
+    if (!session) return startupError ? 'unavailable' : 'signIn';
     const user = session.user || {};
     if (!user.email && !user.new_email) return 'addEmail';
     if (user.new_email || !user.email_confirmed_at) return 'verifyEmail';

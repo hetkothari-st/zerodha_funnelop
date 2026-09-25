@@ -10,17 +10,27 @@ const AuthContext = createContext(null);
 const CLAIMED_KEY = 'funnel_claimed_session';
 const PROFILE_FIELDS = 'id,full_name,email,phone,status,role';
 
-function readLinkError() {
-    if (typeof window === 'undefined') return null;
-    const params = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+function linkErrorFrom(paramString) {
+    const params = new URLSearchParams(paramString);
     const code = params.get('error_code');
     return code ? { code, description: params.get('error_description') || '' } : null;
+}
+
+function readLinkError() {
+    if (typeof window === 'undefined') return null;
+    return linkErrorFrom(window.location.hash.replace(/^#/, '')) || linkErrorFrom(window.location.search.replace(/^\?/, ''));
 }
 
 const result = (error) => ({ error: friendlyError(error), code: error?.code ?? null });
 
 export function AuthProvider({ children, client: clientProp }) {
-    const client = useMemo(() => clientProp ?? getSupabase(), [clientProp]);
+    const client = useMemo(() => {
+        try {
+            return clientProp ?? getSupabase();
+        } catch {
+            return null;
+        }
+    }, [clientProp]);
     const [session, setSession] = useState(null);
     const [loading, setLoading] = useState(true);
     const [profile, setProfile] = useState(null);
@@ -28,43 +38,70 @@ export function AuthProvider({ children, client: clientProp }) {
     const [recovery, setRecovery] = useState(false);
     const [linkError, setLinkError] = useState(readLinkError);
     const [displaced, setDisplaced] = useState(false);
+    const [claiming, setClaiming] = useState(false);
+    const [startupError, setStartupError] = useState(false);
     const sessionRef = useRef(null);
+    const claimingRef = useRef(false);
     const origin = typeof window !== 'undefined' ? window.location.origin : '';
 
     const adoptSession = useCallback((s) => { sessionRef.current = s; setSession(s); }, []);
 
     // One device at a time: a new session claims the account and signs out the others.
     const claimIfNew = useCallback(async (s) => {
+        if (!client) return;
         const sid = sessionIdOf(s?.access_token);
         if (!sid) return;
         let claimed = null;
         try { claimed = localStorage.getItem(CLAIMED_KEY); } catch {}
         if (claimed === sid) return;
-        const { error } = await client.rpc('claim_session');
-        if (error) return;
-        try { localStorage.setItem(CLAIMED_KEY, sid); } catch {}
-        await client.auth.signOut({ scope: 'others' });
+        claimingRef.current = true;
+        setClaiming(true);
+        try {
+            const { error } = await client.rpc('claim_session');
+            if (error) return;
+            try { localStorage.setItem(CLAIMED_KEY, sid); } catch {}
+            await client.auth.signOut({ scope: 'others' });
+        } finally {
+            claimingRef.current = false;
+            setClaiming(false);
+        }
     }, [client]);
 
     const loadProfile = useCallback(async (userId) => {
+        if (!client) { setProfileError(true); return; }
         const { data, error } = await client.from('profiles').select(PROFILE_FIELDS).eq('id', userId).maybeSingle();
+        if (sessionRef.current?.user?.id !== userId) return; // stale response for a session we've moved on from
         if (error) { setProfileError(true); return; }
+        if (!data) { setProfileError(true); return; }
         setProfileError(false);
         setProfile(data);
     }, [client]);
 
     useEffect(() => {
+        if (!client) { setStartupError(true); setLoading(false); return; }
         let active = true;
-        client.auth.getSession().then(({ data }) => {
-            if (!active) return;
-            adoptSession(data.session);
-            setLoading(false);
-        });
+        // onAuthStateChange can fire (e.g. SIGNED_IN) before this initial snapshot resolves;
+        // once that happens the event is the source of truth, so don't let a late, stale
+        // getSession() result stomp a newer session.
+        let authEventSeen = false;
+        client.auth.getSession()
+            .then(({ data, error }) => {
+                if (!active) return;
+                if (error) { setStartupError(true); setLoading(false); return; }
+                if (!authEventSeen) adoptSession(data.session);
+                setLoading(false);
+            })
+            .catch(() => {
+                if (!active) return;
+                setStartupError(true);
+                setLoading(false);
+            });
         const { data: sub } = client.auth.onAuthStateChange((event, s) => {
+            authEventSeen = true;
             adoptSession(s);
             if (event === 'PASSWORD_RECOVERY') setRecovery(true);
-            if (event === 'SIGNED_IN' && s) claimIfNew(s);
-            if (event === 'SIGNED_OUT') { setProfile(null); setDisplaced(false); }
+            if ((event === 'SIGNED_IN' || event === 'PASSWORD_RECOVERY') && s) claimIfNew(s);
+            if (event === 'SIGNED_OUT') { setProfile(null); setDisplaced(false); setRecovery(false); }
         });
         return () => { active = false; sub.subscription.unsubscribe(); };
     }, [client, claimIfNew, adoptSession]);
@@ -73,19 +110,21 @@ export function AuthProvider({ children, client: clientProp }) {
     const phoneVerified = Boolean(session?.user?.phone_confirmed_at);
     useEffect(() => {
         setUserNamespace(userId);
-        if (userId) loadProfile(userId); else { setProfile(null); setProfileError(false); }
+        if (userId) { setProfile(null); setProfileError(false); loadProfile(userId); }
+        else { setProfile(null); setProfileError(false); }
     }, [userId, phoneVerified, loadProfile]);
 
     const refreshSessionState = useCallback(async () => {
+        if (!client) return { code: 'startup_error' };
         const { data, error } = await client.auth.refreshSession();
         if (!error && data?.session) adoptSession(data.session);
         return error;
     }, [client, adoptSession]);
 
     const apiFetch = useMemo(() => createApiFetch({
-        getAccessToken: async () => (await client.auth.getSession()).data.session?.access_token ?? null,
-        onSignedInElsewhere: () => setDisplaced(true),
-        onUnauthenticated: () => { client.auth.signOut({ scope: 'local' }); },
+        getAccessToken: async () => (client ? (await client.auth.getSession()).data.session?.access_token ?? null : null),
+        onSignedInElsewhere: () => { if (!claimingRef.current) setDisplaced(true); },
+        onUnauthenticated: () => { client?.auth.signOut({ scope: 'local' }); },
     }), [client]);
 
     const actions = useMemo(() => ({
@@ -108,7 +147,7 @@ export function AuthProvider({ children, client: clientProp }) {
         resendEmailVerification: async () => {
             const u = sessionRef.current?.user;
             const r = u?.new_email
-                ? await client.auth.resend({ type: 'email_change', email: u.new_email })
+                ? await client.auth.resend({ type: 'email_change', email: u.new_email, options: { emailRedirectTo: origin } })
                 : await client.auth.resend({ type: 'signup', email: u?.email ?? '', options: { emailRedirectTo: origin } });
             return result(r.error);
         },
@@ -129,14 +168,20 @@ export function AuthProvider({ children, client: clientProp }) {
             return result(error);
         },
         signOut: async () => {
-            try { localStorage.removeItem(CLAIMED_KEY); } catch {}
-            await client.auth.signOut({ scope: 'global' });
-            setDisplaced(false);
+            const { error } = await client.auth.signOut({ scope: 'global' });
+            if (!error) {
+                try { localStorage.removeItem(CLAIMED_KEY); } catch {}
+                setDisplaced(false);
+            }
+            return result(error);
         },
         signOutHere: async () => {
-            try { localStorage.removeItem(CLAIMED_KEY); } catch {}
-            await client.auth.signOut({ scope: 'local' });
-            setDisplaced(false);
+            const { error } = await client.auth.signOut({ scope: 'local' });
+            if (!error) {
+                try { localStorage.removeItem(CLAIMED_KEY); } catch {}
+                setDisplaced(false);
+            }
+            return result(error);
         },
         refreshProfile: async () => { const uid = sessionRef.current?.user?.id; if (uid) await loadProfile(uid); },
         clearLinkError: () => {
@@ -147,12 +192,12 @@ export function AuthProvider({ children, client: clientProp }) {
     }), [client, origin, loadProfile, refreshSessionState]);
 
     const value = useMemo(() => ({
-        screen: screenFor({ loading, recovery, linkError, session, profile, profileError }),
+        screen: claiming ? 'loading' : screenFor({ loading, recovery, linkError, session, profile, profileError, startupError }),
         loading, session, user: session?.user ?? null, profile, profileError, recovery, linkError, displaced,
         accessToken: session?.access_token ?? null,
         apiFetch,
         ...actions,
-    }), [loading, recovery, linkError, session, profile, profileError, displaced, apiFetch, actions]);
+    }), [loading, recovery, linkError, session, profile, profileError, displaced, claiming, startupError, apiFetch, actions]);
 
     return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

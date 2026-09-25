@@ -9,6 +9,9 @@ test('toIndianE164 accepts 10-digit Indian mobiles in common formats', () => {
 test('toIndianE164 rejects invalid numbers', () => {
     for (const bad of ['', '12345', '5876543210', '98765432109', 'abcdefghij']) expect(toIndianE164(bad)).toBeNull();
 });
+test('toIndianE164 accepts a leading 0 on an 11-digit number', () => {
+    expect(toIndianE164('09876543210')).toBe('+919876543210');
+});
 test('passwordProblem', () => {
     expect(passwordProblem('short1')).toBe('Use at least 8 characters.');
     expect(passwordProblem('longpassword')).toBe('Use both letters and numbers.');

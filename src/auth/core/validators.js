@@ -1,6 +1,8 @@
 export function toIndianE164(input) {
     const digits = String(input ?? '').replace(/\D/g, '');
-    const local = digits.length === 12 && digits.startsWith('91') ? digits.slice(2) : digits;
+    let local = digits;
+    if (digits.length === 12 && digits.startsWith('91')) local = digits.slice(2);
+    else if (digits.length === 11 && digits.startsWith('0')) local = digits.slice(1);
     return /^[6-9]\d{9}$/.test(local) ? `+91${local}` : null;
 }
 
