@@ -9,7 +9,7 @@ export function loadCheckout() {
             const s = document.createElement('script');
             s.src = SRC;
             s.async = true;
-            s.onload = () => (window.Razorpay ? resolve(window.Razorpay) : reject(new Error('Razorpay failed to load')));
+            s.onload = () => { if (window.Razorpay) return resolve(window.Razorpay); loading = null; reject(new Error('Razorpay failed to load')); };
             s.onerror = () => { loading = null; reject(new Error('Razorpay failed to load')); };
             document.head.appendChild(s);
         });

@@ -26,6 +26,13 @@ describe('loadCheckout', () => {
         loadCheckout();
         expect(document.head.querySelectorAll('script')).toHaveLength(2);
     });
+    it('onload without Razorpay rejects and allows a retry', async () => {
+        const p = loadCheckout();
+        document.head.querySelector('script').onload();
+        await expect(p).rejects.toThrow('failed to load');
+        loadCheckout();
+        expect(document.head.querySelectorAll('script')).toHaveLength(2);
+    });
 });
 
 describe('openCheckout', () => {
