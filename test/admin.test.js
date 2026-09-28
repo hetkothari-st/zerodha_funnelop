@@ -145,7 +145,7 @@ test('profileAdmin talks to PostgREST correctly', async () => {
     const pa = createProfileAdmin({ supabaseUrl: 'https://op.supabase.co', serviceKey: 'svc', fetchImpl });
 
     await pa.listByStatus('pending');
-    assert.equal(calls[0].url, 'https://op.supabase.co/rest/v1/profiles?status=eq.pending&select=id,full_name,email,phone,status,role,signup_provider,created_at,approved_at&order=created_at.desc');
+    assert.equal(calls[0].url, 'https://op.supabase.co/rest/v1/profiles?status=eq.pending&select=id,full_name,email,phone,status,role,signup_provider,created_at,approved_at,comp_pro,subscriptions(status,current_end)&order=created_at.desc');
     assert.equal(calls[0].init.headers.Authorization, 'Bearer svc');
 
     await pa.setStatus(TARGET, 'approved', 'admin');
@@ -174,7 +174,7 @@ test('profileAdmin.getById selects the list fields and returns the row or null',
     let rows = [pendingRow];
     const pa = createProfileAdmin({ supabaseUrl: 'https://op.supabase.co', serviceKey: 'svc', fetchImpl: async (url, init) => { calls.push({ url, init }); return new Response(JSON.stringify(rows), { status: 200 }); } });
     assert.deepEqual(await pa.getById(TARGET), pendingRow);
-    assert.equal(calls[0].url, `https://op.supabase.co/rest/v1/profiles?id=eq.${TARGET}&select=id,full_name,email,phone,status,role,signup_provider,created_at,approved_at`);
+    assert.equal(calls[0].url, `https://op.supabase.co/rest/v1/profiles?id=eq.${TARGET}&select=id,full_name,email,phone,status,role,signup_provider,created_at,approved_at,comp_pro,subscriptions(status,current_end)`);
     assert.equal(calls[0].init.headers.Authorization, 'Bearer svc');
     rows = [];
     assert.equal(await pa.getById(TARGET), null);
