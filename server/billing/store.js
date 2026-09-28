@@ -11,7 +11,11 @@ export function createBillingStore({ supabaseUrl, serviceKey, fetchImpl = fetch,
             headers: { ...baseHeaders, ...(init.headers || {}) },
             signal: AbortSignal.timeout(timeoutMs),
         });
-        if (!res.ok) throw new Error(`supabase ${init.method || 'GET'} ${path.split('?')[0]} failed: ${res.status}`);
+        if (!res.ok) {
+            const err = new Error(`supabase ${init.method || 'GET'} ${path.split('?')[0]} failed: ${res.status}`);
+            err.status = res.status;
+            throw err;
+        }
         const text = await res.text();
         return text ? JSON.parse(text) : null;
     }
@@ -39,12 +43,20 @@ export function createBillingStore({ supabaseUrl, serviceKey, fetchImpl = fetch,
                 body: JSON.stringify({ user_id: userId, ...fields }),
             }));
         },
-        async updateSubscription(subId, patch) {
-            return first(await call(`subscriptions?razorpay_subscription_id=eq.${enc(subId)}`, {
+        // notAfter makes the write conditional: only applies when the row has never seen a
+        // newer event (atomic stale-event guard, evaluated by Postgres, not read-then-compare in JS).
+        async updateSubscription(subId, patch, { notAfter } = {}) {
+            let path = `subscriptions?razorpay_subscription_id=eq.${enc(subId)}`;
+            if (notAfter) path += `&or=(last_event_at.is.null,last_event_at.lte.${encodeURIComponent(notAfter)})`;
+            return first(await call(path, {
                 method: 'PATCH',
                 headers: { Prefer: 'return=representation' },
                 body: JSON.stringify({ ...patch, updated_at: new Date().toISOString() }),
             }));
+        },
+        async hasEvent(eventId) {
+            const rows = await call(`billing_events?event_id=eq.${enc(eventId)}&select=event_id`);
+            return Array.isArray(rows) && rows.length > 0;
         },
         async recordEvent(eventId) {
             const rows = await call('billing_events', {
@@ -53,9 +65,6 @@ export function createBillingStore({ supabaseUrl, serviceKey, fetchImpl = fetch,
                 body: JSON.stringify({ event_id: eventId }),
             });
             return Array.isArray(rows) && rows.length > 0;
-        },
-        async forgetEvent(eventId) {
-            await call(`billing_events?event_id=eq.${enc(eventId)}`, { method: 'DELETE' });
         },
     };
 }

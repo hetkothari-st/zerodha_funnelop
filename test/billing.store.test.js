@@ -42,7 +42,33 @@ test('updateSubscription returns null when no row matched', async () => {
     assert.equal(await store.updateSubscription('sub_missing', { status: 'active' }), null);
 });
 
+test('updateSubscription with notAfter adds the atomic stale-guard filter', async () => {
+    const { calls, store } = rest(() => ({ body: [] }));
+    assert.equal(await store.updateSubscription('sub_1', { status: 'active' }, { notAfter: '2026-01-01T00:00:00.000Z' }), null);
+    assert.match(calls[0].url, /subscriptions\?razorpay_subscription_id=eq\.sub_1&or=\(last_event_at\.is\.null,last_event_at\.lte\.2026-01-01T00%3A00%3A00\.000Z\)/);
+});
+
+test('updateSubscription without notAfter omits the stale-guard filter', async () => {
+    const { calls, store } = rest(() => ({ body: [{ razorpay_subscription_id: 'sub_1' }] }));
+    await store.updateSubscription('sub_1', { status: 'active' });
+    assert.ok(!calls[0].url.includes('&or='));
+});
+
+test('hasEvent: true when a row exists, false otherwise', async () => {
+    const { calls, store } = rest((url) => ({ body: url.includes('evt_1') ? [{ event_id: 'evt_1' }] : [] }));
+    assert.equal(await store.hasEvent('evt_1'), true);
+    assert.equal(await store.hasEvent('evt_2'), false);
+    assert.match(calls[0].url, /billing_events\?event_id=eq\.evt_1&select=event_id/);
+});
+
 test('failed PostgREST call throws without leaking the key', async () => {
     const { store } = rest(() => ({ status: 500, body: { message: 'boom' } }));
     await assert.rejects(store.latestSubscription('u1'), (e) => /failed: 500/.test(e.message) && !e.message.includes('svc'));
+});
+
+test('failed PostgREST call sets .status to the HTTP status', async () => {
+    const { store } = rest(() => ({ status: 409, body: { message: 'conflict' } }));
+    await assert.rejects(store.insertSubscription('u1', { razorpay_subscription_id: 'sub_1' }), (e) => e.status === 409);
+    const notFound = rest(() => ({ status: 404, body: { message: 'nope' } }));
+    await assert.rejects(notFound.store.getSubscription('sub_x'), (e) => e.status === 404);
 });

@@ -21,7 +21,7 @@ export function createBillingRouter({ auth, billing, razorpay, planId, keyId, we
             });
         } catch (err) {
             console.error('[billing] status failed:', err.message);
-            sendError(res, 'auth_unavailable');
+            sendError(res, 'auth_unavailable', 'Billing is temporarily unavailable.');
         }
     }));
 
@@ -32,7 +32,7 @@ export function createBillingRouter({ auth, billing, razorpay, planId, keyId, we
             [ent, open] = await Promise.all([billing.entitlement(userId), billing.openSubscription(userId)]);
         } catch (err) {
             console.error('[billing] subscribe lookup failed:', err.message);
-            return sendError(res, 'auth_unavailable');
+            return sendError(res, 'auth_unavailable', 'Billing is temporarily unavailable.');
         }
         if (ent.plan === 'pro') return sendError(res, 'conflict', 'You already have Pro.');
         if (open?.status === 'created') return res.json({ subscriptionId: open.razorpay_subscription_id, keyId });
@@ -52,7 +52,7 @@ export function createBillingRouter({ auth, billing, razorpay, planId, keyId, we
             const winner = await billing.openSubscription(userId).catch(() => null);
             if (winner?.status === 'created') return res.json({ subscriptionId: winner.razorpay_subscription_id, keyId });
             console.error('[billing] subscription insert failed:', err.message);
-            return sendError(res, 'auth_unavailable');
+            return sendError(res, 'auth_unavailable', 'Billing is temporarily unavailable.');
         }
         res.json({ subscriptionId: sub.id, keyId });
     }));
@@ -63,9 +63,10 @@ export function createBillingRouter({ auth, billing, razorpay, planId, keyId, we
             open = await billing.openSubscription(req.auth.userId);
         } catch (err) {
             console.error('[billing] cancel lookup failed:', err.message);
-            return sendError(res, 'auth_unavailable');
+            return sendError(res, 'auth_unavailable', 'Billing is temporarily unavailable.');
         }
         if (!open || !CANCELLABLE.has(open.status)) return sendError(res, 'bad_request', 'No active subscription to cancel.');
+        if (open.cancel_at_period_end) return res.json({ ok: true, until: open.current_end ?? null });
         try {
             await razorpay.cancelSubscription(open.razorpay_subscription_id);
         } catch (err) {
@@ -97,38 +98,93 @@ export function createBillingRouter({ auth, billing, razorpay, planId, keyId, we
         const entity = event?.payload?.subscription?.entity;
         if (!String(event?.event || '').startsWith('subscription.') || !entity?.id) return res.json({ ok: true, ignored: true });
 
-        let first;
+        // The event is recorded only once processing reaches a definitive outcome (success,
+        // stale, or a terminal/poison condition) — never on a transient failure, so Razorpay's
+        // retry reprocesses it instead of getting stuck as a permanently-skipped duplicate.
+        const recordProcessed = async () => {
+            try {
+                await billing.recordEvent(eventId);
+            } catch (err) {
+                console.error(`[billing] recordEvent failed for event ${eventId} (sub ${entity.id}):`, err.message);
+            }
+        };
+
+        let duplicate;
         try {
-            first = await billing.recordEvent(eventId);
+            duplicate = await billing.hasEvent(eventId);
         } catch (err) {
-            console.error('[billing] event record failed:', err.message);
+            console.error('[billing] event lookup failed:', err.message);
             return sendError(res, 'internal');
         }
-        if (!first) return res.json({ ok: true, duplicate: true });
+        if (duplicate) return res.json({ ok: true, duplicate: true });
+
+        // Poison guard: a webhook for a different plan than the one this router serves should
+        // never be applied here; it is a permanent mismatch, not something a retry will fix.
+        if (entity.plan_id && entity.plan_id !== planId) {
+            console.warn(`[billing] webhook for ${entity.id} targets plan ${entity.plan_id}, not ${planId}; ignored`);
+            await recordProcessed();
+            return res.json({ ok: true, ignored: true });
+        }
 
         const eventAt = new Date((Number(event.created_at) || Math.floor(Date.now() / 1000)) * 1000).toISOString();
+
+        let existing;
         try {
-            const existing = await billing.getSubscription(entity.id);
-            if (existing) {
-                if (existing.last_event_at && Date.parse(existing.last_event_at) > Date.parse(eventAt)) return res.json({ ok: true, stale: true });
-                const { razorpay_subscription_id: _id, ...fields } = toRow(entity);
-                await billing.updateSubscription(entity.id, { ...fields, last_event_at: eventAt });
-                return res.json({ ok: true });
+            existing = await billing.getSubscription(entity.id);
+        } catch (err) {
+            console.error(`[billing] webhook lookup failed for ${entity.id}:`, err.message);
+            return sendError(res, 'internal');
+        }
+
+        if (existing) {
+            const { razorpay_subscription_id: _id, ...fields } = toRow(entity);
+            if (fields.current_end === null) delete fields.current_end; // never overwrite a known current_end with an unknown one
+            let updated;
+            try {
+                updated = await billing.updateSubscription(entity.id, { ...fields, last_event_at: eventAt }, { notAfter: eventAt });
+            } catch (err) {
+                console.error(`[billing] webhook update failed for ${entity.id}:`, err.message);
+                return sendError(res, 'internal');
             }
-            // No local row (insert failed, or created outside the app): trust Razorpay's copy.
-            const remote = await razorpay.fetchSubscription(entity.id);
-            const userId = remote?.notes?.user_id;
-            if (!UUID.test(String(userId || ''))) {
-                console.warn(`[billing] webhook for ${entity.id} has no user; ignored`);
+            await recordProcessed();
+            if (!updated) return res.json({ ok: true, stale: true });
+            return res.json({ ok: true });
+        }
+
+        // No local row (insert failed, or created outside the app): trust Razorpay's copy.
+        let remote;
+        try {
+            remote = await razorpay.fetchSubscription(entity.id);
+        } catch (err) {
+            if (err.status === 404) {
+                // Razorpay has no record of it either — this will never resolve on retry.
+                console.error(`[billing] webhook for unknown subscription ${entity.id}: not found at Razorpay (terminal, ignoring)`);
+                await recordProcessed();
                 return res.json({ ok: true, ignored: true });
             }
-            await billing.insertSubscription(userId, { ...toRow(remote), last_event_at: eventAt });
-            res.json({ ok: true });
-        } catch (err) {
-            console.error(`[billing] webhook ${event.event} failed:`, err.message);
-            await billing.forgetEvent(eventId).catch(() => {});
-            sendError(res, 'internal');
+            console.error(`[billing] webhook fetchSubscription failed for ${entity.id}:`, err.message);
+            return sendError(res, 'internal');
         }
+        const userId = remote?.notes?.user_id;
+        if (!UUID.test(String(userId || ''))) {
+            console.warn(`[billing] webhook for ${entity.id} has no user; ignored`);
+            await recordProcessed();
+            return res.json({ ok: true, ignored: true });
+        }
+        try {
+            await billing.insertSubscription(userId, { ...toRow(remote), last_event_at: eventAt });
+        } catch (err) {
+            if (err.status === 409) {
+                // Row already exists (FK/unique conflict) — a concurrent insert won; nothing to retry.
+                console.error(`[billing] webhook insert for ${entity.id} conflicted (409, terminal, ignoring): ${err.message}`);
+                await recordProcessed();
+                return res.json({ ok: true, ignored: true });
+            }
+            console.error(`[billing] webhook insertSubscription failed for ${entity.id}:`, err.message);
+            return sendError(res, 'internal');
+        }
+        await recordProcessed();
+        res.json({ ok: true });
     }));
 
     return router;

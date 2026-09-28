@@ -13,7 +13,7 @@ const SECRET = 'whsec_test';
 
 function fakeBilling({ ent = { plan: 'free', source: null, until: null }, subs = [] } = {}) {
     const events = new Set();
-    const log = { inserted: [], updated: [], forgotten: [] };
+    const log = { inserted: [], updated: [] };
     const store = {
         log, subs,
         entitlement: async () => ent,
@@ -25,14 +25,15 @@ function fakeBilling({ ent = { plan: 'free', source: null, until: null }, subs =
             const row = { user_id: uid, cancel_at_period_end: false, last_event_at: null, ...fields };
             subs.push(row); log.inserted.push(row); return row;
         },
-        updateSubscription: async (id, patch) => {
+        updateSubscription: async (id, patch, { notAfter } = {}) => {
             if (store.failUpdate) throw new Error('db down');
             const row = subs.find((s) => s.razorpay_subscription_id === id);
             if (!row) return null;
+            if (notAfter && row.last_event_at && Date.parse(row.last_event_at) > Date.parse(notAfter)) return null;
             Object.assign(row, patch); log.updated.push({ id, patch }); return row;
         },
+        hasEvent: async (id) => events.has(id),
         recordEvent: async (id) => { if (events.has(id)) return false; events.add(id); return true; },
-        forgetEvent: async (id) => { events.delete(id); log.forgotten.push(id); },
     };
     return store;
 }
@@ -222,16 +223,127 @@ test('webhook: non-subscription events are acknowledged and ignored', async () =
     } finally { await srv.close(); }
 });
 
-test('webhook: DB failure → 500 and the event is forgotten so a retry reprocesses it', async () => {
+test('webhook: DB failure → 500 and the event is never recorded, so a retry reprocesses it', async () => {
     const billing = fakeBilling({ subs: [{ user_id: USER, razorpay_subscription_id: 'sub_1', status: 'created' }] });
     billing.failUpdate = true;
     const { srv } = await setup({ billing });
     try {
         const req = signed(subEvent('subscription.activated', { id: 'sub_1', status: 'active', current_end: 1767225600 }));
         assert.equal((await fetch(`${srv.url}/api/billing/webhook`, req)).status, 500);
-        assert.deepEqual(billing.log.forgotten, ['evt_1']);
+        assert.equal(await billing.hasEvent('evt_1'), false);
         billing.failUpdate = false;
         assert.equal((await fetch(`${srv.url}/api/billing/webhook`, req)).status, 200);
         assert.equal(billing.subs[0].status, 'active');
+        assert.equal(await billing.hasEvent('evt_1'), true);
+    } finally { await srv.close(); }
+});
+
+test('webhook: event with no current_end does not clear a known current_end', async () => {
+    const billing = fakeBilling({ subs: [{ user_id: USER, razorpay_subscription_id: 'sub_1', status: 'active', current_end: '2026-01-01T00:00:00.000Z', last_event_at: null }] });
+    const { srv } = await setup({ billing });
+    try {
+        const req = signed(subEvent('subscription.pending', { id: 'sub_1', status: 'pending' }));
+        assert.equal((await fetch(`${srv.url}/api/billing/webhook`, req)).status, 200);
+        assert.equal(billing.subs[0].status, 'pending');
+        assert.equal(billing.subs[0].current_end, '2026-01-01T00:00:00.000Z');
+    } finally { await srv.close(); }
+});
+
+test('webhook: duplicate event id is a no-op without hitting the DB update path twice', async () => {
+    const billing = fakeBilling({ subs: [{ user_id: USER, razorpay_subscription_id: 'sub_1', status: 'created' }] });
+    const { srv } = await setup({ billing });
+    try {
+        const req = signed(subEvent('subscription.activated', { id: 'sub_1', status: 'active', current_end: 1767225600 }), { eventId: 'evt_dup' });
+        assert.equal((await fetch(`${srv.url}/api/billing/webhook`, req)).status, 200);
+        assert.equal(billing.log.updated.length, 1);
+        const again = await fetch(`${srv.url}/api/billing/webhook`, req);
+        assert.equal(again.status, 200);
+        assert.deepEqual(await again.json(), { ok: true, duplicate: true });
+        assert.equal(billing.log.updated.length, 1);
+    } finally { await srv.close(); }
+});
+
+test('webhook: plan mismatch is ignored but the event is still recorded (dedup on retry)', async () => {
+    const billing = fakeBilling({ subs: [{ user_id: USER, razorpay_subscription_id: 'sub_1', status: 'created' }] });
+    const { srv } = await setup({ billing });
+    try {
+        const req = signed(subEvent('subscription.activated', { id: 'sub_1', status: 'active', current_end: 1767225600, plan_id: 'plan_other' }), { eventId: 'evt_plan' });
+        const res = await fetch(`${srv.url}/api/billing/webhook`, req);
+        assert.equal(res.status, 200);
+        assert.deepEqual(await res.json(), { ok: true, ignored: true });
+        assert.equal(billing.subs[0].status, 'created');
+        const again = await fetch(`${srv.url}/api/billing/webhook`, req);
+        assert.deepEqual(await again.json(), { ok: true, duplicate: true });
+    } finally { await srv.close(); }
+});
+
+test('webhook: unknown subscription not found at Razorpay (404) is terminal — ignored and recorded', async () => {
+    const billing = fakeBilling();
+    const { srv } = await setup({ billing, razorpay: fakeRazorpay({ remote: {} }) });
+    try {
+        const req = signed(subEvent('subscription.activated', { id: 'sub_ghost', status: 'active', current_end: 1767225600 }), { eventId: 'evt_404' });
+        const res = await fetch(`${srv.url}/api/billing/webhook`, req);
+        assert.equal(res.status, 200);
+        assert.deepEqual(await res.json(), { ok: true, ignored: true });
+        assert.equal(billing.log.inserted.length, 0);
+        const again = await fetch(`${srv.url}/api/billing/webhook`, req);
+        assert.deepEqual(await again.json(), { ok: true, duplicate: true });
+    } finally { await srv.close(); }
+});
+
+test('webhook: insert conflict (409) for an unknown subscription is terminal — ignored', async () => {
+    const remote = { sub_x: { id: 'sub_x', status: 'active', current_end: 1767225600, notes: { user_id: OWNER } } };
+    const billing = fakeBilling();
+    billing.insertSubscription = async () => { const err = new Error('duplicate key value violates unique constraint'); err.status = 409; throw err; };
+    const { srv } = await setup({ billing, razorpay: fakeRazorpay({ remote }) });
+    try {
+        const req = signed(subEvent('subscription.activated', { id: 'sub_x', status: 'active', current_end: 1767225600 }), { eventId: 'evt_409' });
+        const res = await fetch(`${srv.url}/api/billing/webhook`, req);
+        assert.equal(res.status, 200);
+        assert.deepEqual(await res.json(), { ok: true, ignored: true });
+    } finally { await srv.close(); }
+});
+
+test('webhook: malformed JSON body → 400', async () => {
+    const { srv } = await setup();
+    try {
+        const raw = '{not json';
+        const res = await fetch(`${srv.url}/api/billing/webhook`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'x-razorpay-event-id': 'evt_bad',
+                'x-razorpay-signature': crypto.createHmac('sha256', SECRET).update(raw).digest('hex'),
+            },
+            body: raw,
+        });
+        assert.equal(res.status, 400);
+    } finally { await srv.close(); }
+});
+
+test('webhook: missing x-razorpay-event-id header → 400', async () => {
+    const { srv } = await setup();
+    try {
+        const raw = JSON.stringify(subEvent('subscription.activated', { id: 'sub_1', status: 'active' }));
+        const res = await fetch(`${srv.url}/api/billing/webhook`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'x-razorpay-signature': crypto.createHmac('sha256', SECRET).update(raw).digest('hex'),
+            },
+            body: raw,
+        });
+        assert.equal(res.status, 400);
+    } finally { await srv.close(); }
+});
+
+test('cancel: already flagged cancel_at_period_end is a no-op (does not call Razorpay again)', async () => {
+    const billing = fakeBilling({ subs: [{ user_id: USER, razorpay_subscription_id: 'sub_act', status: 'active', current_end: '2026-10-28T00:00:00.000Z', cancel_at_period_end: true }] });
+    const { srv, headers, razorpay } = await setup({ billing });
+    try {
+        const res = await fetch(`${srv.url}/api/billing/cancel`, { method: 'POST', headers });
+        assert.equal(res.status, 200);
+        assert.deepEqual(await res.json(), { ok: true, until: '2026-10-28T00:00:00.000Z' });
+        assert.deepEqual(razorpay.log.cancelled, []);
     } finally { await srv.close(); }
 });
