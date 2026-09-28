@@ -12,6 +12,8 @@ export const theme = {
     productName: 'Funnel Op',
     tagline: 'Pick up where the market left you.',
     Wordmark,
+    accent: '#38bdf8',
+    proFeatures: ['Live Logs with big-order alerts and sounds', 'Recent Alerts feed', 'Quick Strikes', 'Multiple monitors', 'Columns layout'],
     classes: {
         page: "min-h-screen flex flex-col min-[900px]:flex-row bg-[#04060a] text-slate-200 font-['Inter',sans-serif]",
         panel: 'relative h-40 shrink-0 overflow-hidden border-b border-[#1e293b] min-[900px]:h-auto min-[900px]:flex-[1.35] min-[900px]:border-b-0 min-[900px]:border-r',
