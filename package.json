@@ -10,7 +10,8 @@
         "build": "vite build",
         "preview": "vite preview",
         "test": "node --test \"test/**/*.test.js\"",
-        "test:web": "vitest run"
+        "test:web": "vitest run",
+        "migrate:users": "node scripts/migrate-app-users.mjs"
     },
     "dependencies": {
         "@supabase/supabase-js": "^2.117.2",
