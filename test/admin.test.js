@@ -13,7 +13,7 @@ const pendingRow = { id: TARGET, full_name: 'Asha', email: 'asha@example.com', p
 const noPhoneRow = { id: NO_PHONE, full_name: 'Ravi', email: 'ravi@example.com', phone: null, status: 'pending' };
 
 function fakeProfileAdmin({ rows = [pendingRow], auditFails = false } = {}) {
-    const log = { setStatus: [], audit: [] };
+    const log = { setStatus: [], audit: [], setCompPro: [] };
     return {
         log,
         listByStatus: async (status) => rows.filter((r) => r.status === status),
@@ -22,6 +22,11 @@ function fakeProfileAdmin({ rows = [pendingRow], auditFails = false } = {}) {
             log.setStatus.push({ id, status, adminId });
             const row = rows.find((r) => r.id === id);
             return row ? { ...row, status } : null;
+        },
+        setCompPro: async (id, value) => {
+            log.setCompPro = [...(log.setCompPro || []), { id, value }];
+            const row = rows.find((r) => r.id === id);
+            return row ? { ...row, comp_pro: value } : null;
         },
         audit: async (...args) => { if (auditFails) throw new Error('audit down'); log.audit.push(args); },
     };
@@ -187,5 +192,26 @@ test('an unexpected rejection in a handler reaches the Express error handler', a
         const res = await fetch(`${srv.url}/api/admin/users/${TARGET}/approve`, { method: 'POST', headers: as('admin'), signal: AbortSignal.timeout(2000) });
         assert.equal(res.status, 500);
         assert.equal((await res.json()).code, 'internal');
+    } finally { await srv.close(); }
+});
+
+test('grant_comp / revoke_comp: admin only, sets flag, audits', async () => {
+    const { srv, as, profileAdmin } = await setup();
+    try {
+        assert.equal((await fetch(`${srv.url}/api/admin/users/${TARGET}/grant_comp`, { method: 'POST', headers: as('user') })).status, 403);
+        const res = await fetch(`${srv.url}/api/admin/users/${TARGET}/grant_comp`, { method: 'POST', headers: as('admin') });
+        assert.equal(res.status, 200);
+        assert.equal((await res.json()).user.comp_pro, true);
+        await fetch(`${srv.url}/api/admin/users/${TARGET}/revoke_comp`, { method: 'POST', headers: as('admin') });
+        assert.deepEqual(profileAdmin.log.setCompPro, [{ id: TARGET, value: true }, { id: TARGET, value: false }]);
+        assert.deepEqual(profileAdmin.log.audit, [['admin', TARGET, 'grant_comp'], ['admin', TARGET, 'revoke_comp']]);
+    } finally { await srv.close(); }
+});
+
+test('grant_comp: invalid id → 400, unknown id → 404', async () => {
+    const { srv, as } = await setup();
+    try {
+        assert.equal((await fetch(`${srv.url}/api/admin/users/nope/grant_comp`, { method: 'POST', headers: as('admin') })).status, 400);
+        assert.equal((await fetch(`${srv.url}/api/admin/users/99999999-9999-4999-8999-999999999999/grant_comp`, { method: 'POST', headers: as('admin') })).status, 404);
     } finally { await srv.close(); }
 });
