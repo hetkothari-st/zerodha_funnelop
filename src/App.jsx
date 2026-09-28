@@ -151,11 +151,13 @@ const App = () => {
         setActiveMonitorId(newId);
     };
 
-    const addMonitor = useProAction(handleAddMonitor);
-    const setColumns = useProAction(() => setMonitorLayouts(prev => ({ ...prev, [activeMonitorId]: 'vertical' })));
     const view = freeView({ isPro, monitors, activeMonitorId, layouts: monitorLayouts, settings: monitorSettings });
 
+    const addMonitor = useProAction(handleAddMonitor);
+    const setColumns = useProAction(() => setMonitorLayouts(prev => ({ ...prev, [view.activeId]: 'vertical' })));
+
     const handleRemoveMonitor = (id) => {
+        if (!isPro) return; // Free users cannot remove monitors
         if (monitors.length <= 1) return;
         setMonitors(prev => prev.filter(m => m.id !== id));
         const newSettings = { ...monitorSettings };
@@ -169,13 +171,13 @@ const App = () => {
         if (activeMonitorId === id) setActiveMonitorId(monitors[0].id);
     };
 
-    // Toggle Visibility
+    // Toggle Visibility (always keyed to the monitor actually displayed)
     const toggleElement = (element) => {
         setMonitorSettings(prev => ({
             ...prev,
-            [activeMonitorId]: {
-                ...prev[activeMonitorId],
-                [element]: !prev[activeMonitorId][element]
+            [view.activeId]: {
+                ...prev[view.activeId],
+                [element]: !prev[view.activeId][element]
             }
         }));
     };
@@ -275,7 +277,7 @@ const App = () => {
                     <p className="text-[10px] uppercase text-white/20 font-bold tracking-wider mb-2 px-1">View</p>
                     <div className="flex bg-white/5 rounded p-0.5 border border-white/10">
                         <button
-                            onClick={() => setMonitorLayouts(prev => ({ ...prev, [activeMonitorId]: 'original' }))}
+                            onClick={() => setMonitorLayouts(prev => ({ ...prev, [view.activeId]: 'original' }))}
                             className={cn("flex-1 py-1.5 rounded text-[10px] font-bold flex items-center justify-center gap-1.5 transition-all",
                                 currentLayout === 'original' ? "bg-blue-600 text-white shadow-md shadow-blue-500/20" : "text-white/40 hover:text-white hover:bg-white/5"
                             )}
@@ -312,7 +314,7 @@ const App = () => {
                                 <span className="flex items-center gap-2">
                                     Monitor {idx + 1}
                                 </span>
-                                {monitors.length > 1 && (
+                                {isPro && view.monitors.length > 1 && (
                                     <Trash2 size={12} className="opacity-0 group-hover:opacity-100 hover:text-red-400"
                                         onClick={(e) => { e.stopPropagation(); handleRemoveMonitor(m.id); }}
                                     />
