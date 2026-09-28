@@ -4,5 +4,6 @@ import { adminApi } from './support/admin.js';
 
 const env = readE2EEnv();
 if (!env) { console.error('E2E_* env not set'); process.exit(2); }
-const n = await adminApi(env).deleteRunUsers('e2e+');
+const testPhoneDigits = env.testPhone ? env.testPhone.replace(/^\+/, '') : undefined;
+const n = await adminApi(env).deleteRunUsers('e2e+', testPhoneDigits);
 console.log(`Deleted ${n} e2e user(s).`);

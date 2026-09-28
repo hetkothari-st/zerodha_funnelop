@@ -3,6 +3,8 @@ import { readE2EEnv } from './support/env.js';
 import { adminApi } from './support/admin.js';
 import { signIn } from './support/login.js';
 
+function escapeRegExp(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+
 const env = readE2EEnv();
 test.skip(!env, 'E2E_* env not set (see docs/runbooks/auth-rollout.md)');
 const admin = env ? adminApi(env) : null;
@@ -51,7 +53,8 @@ test('admin approves a pending user from /admin', async ({ page }) => {
     await signIn(page, boss);
     await page.goto('/admin');
     await expect(page.getByRole('heading', { name: 'Users' })).toBeVisible();
-    await page.getByRole('button', { name: new RegExp(`^Approve E2E`) }).first().click();
+    await page.getByRole('row', { name: new RegExp(escapeRegExp(pending.email)) })
+        .getByRole('button', { name: /^Approve/ }).click();
     await expect(page.getByText(pending.email)).toBeHidden({ timeout: 15_000 });
 });
 
@@ -69,17 +72,29 @@ test('expired email link shows the expired screen', async ({ page }) => {
 
 test('phone-first sign-up with a Supabase test number reaches the add-email step', async ({ page }) => {
     test.skip(!env?.testPhone || !env?.testOtp, 'E2E_TEST_PHONE / E2E_TEST_OTP not set');
-    await page.goto('/');
-    await page.getByRole('button', { name: 'Create an account' }).click();
-    await page.getByRole('tab', { name: 'Mobile OTP' }).click();
-    await page.getByLabel('Mobile number').fill(env.testPhone.replace(/^\+91/, ''));
-    await page.getByRole('button', { name: 'Send code' }).click();
-    await page.getByLabel('6-digit code').fill(env.testOtp);
-    await page.getByRole('button', { name: 'Verify' }).click();
-    await expect(page.getByRole('heading', { name: 'A few more details' })).toBeVisible();
-    // The test phone user is reused across runs; remove it so the next run starts fresh.
-    const r = await fetch(`${env.supabaseUrl}/auth/v1/admin/users?page=1&per_page=1000`, { headers: { apikey: env.serviceKey, Authorization: `Bearer ${env.serviceKey}` } });
     const phoneDigits = env.testPhone.replace(/^\+/, '');
-    const found = (await r.json()).users.find((x) => x.phone === phoneDigits);
-    if (found) created.push(found.id);
+    async function findTestPhoneUser() {
+        const r = await fetch(`${env.supabaseUrl}/auth/v1/admin/users?page=1&per_page=1000`, { headers: { apikey: env.serviceKey, Authorization: `Bearer ${env.serviceKey}` } });
+        const body = await r.json();
+        return (body.users || []).find((x) => x.phone === phoneDigits);
+    }
+    // The test phone number is shared across runs; a crashed earlier run can leave it attached
+    // to a stale user. Self-heal by clearing it before we try to use it.
+    const stale = await findTestPhoneUser();
+    if (stale) { try { await admin.deleteUser(stale.id); } catch {} }
+    try {
+        await page.goto('/');
+        await page.getByRole('button', { name: 'Create an account' }).click();
+        await page.getByRole('tab', { name: 'Mobile OTP' }).click();
+        await page.getByLabel('Mobile number').fill(env.testPhone.replace(/^\+91/, ''));
+        await page.getByRole('button', { name: 'Send code' }).click();
+        await page.getByLabel('6-digit code').fill(env.testOtp);
+        await page.getByRole('button', { name: 'Verify' }).click();
+        await expect(page.getByRole('heading', { name: 'A few more details' })).toBeVisible();
+    } finally {
+        // Look the user up by phone regardless of whether the assertions above passed, so a
+        // failed run still gets cleaned up and doesn't poison the next one.
+        const found = await findTestPhoneUser();
+        if (found) created.push(found.id);
+    }
 });
