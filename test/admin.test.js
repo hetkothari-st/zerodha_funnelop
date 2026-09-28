@@ -215,3 +215,30 @@ test('grant_comp: invalid id → 400, unknown id → 404', async () => {
         assert.equal((await fetch(`${srv.url}/api/admin/users/99999999-9999-4999-8999-999999999999/grant_comp`, { method: 'POST', headers: as('admin') })).status, 404);
     } finally { await srv.close(); }
 });
+
+test('grant_comp: profileAdmin.setCompPro throws → 503 auth_unavailable', async () => {
+    const { auth, profiles, tokenFor } = fakeAuth({ admin: approvedAdmin });
+    const profileAdmin = {
+        log: { setCompPro: [] },
+        setCompPro: async () => { throw new Error('db down'); },
+        audit: async () => {},
+    };
+    const app = express();
+    app.use(express.json());
+    app.use(createAdminRouter({ auth, profileAdmin, profiles, notifier: {}, requireMobile: false }));
+    const srv = await listen(app);
+    try {
+        const res = await fetch(`${srv.url}/api/admin/users/${TARGET}/grant_comp`, { method: 'POST', headers: { Authorization: `Bearer ${tokenFor('admin')}` } });
+        assert.equal(res.status, 503);
+        assert.equal((await res.json()).code, 'auth_unavailable');
+    } finally { await srv.close(); }
+});
+
+test('grant_comp: audit failure does not fail the request (returns 200)', async () => {
+    const { srv, as } = await setup({ auditFails: true });
+    try {
+        const res = await fetch(`${srv.url}/api/admin/users/${TARGET}/grant_comp`, { method: 'POST', headers: as('admin') });
+        assert.equal(res.status, 200);
+        assert.equal((await res.json()).user.comp_pro, true);
+    } finally { await srv.close(); }
+});
