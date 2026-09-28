@@ -7,6 +7,11 @@ import MonitorDashboard from './components/MonitorDashboard';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import logo from '/Doc1-removebg-preview.png';
+import { useEntitlement } from './billing/EntitlementProvider';
+import { ProBadge, useProAction } from './billing/ProGate';
+import PlanChip from './billing/PlanChip';
+import BillingBanner from './billing/BillingBanner';
+import { freeView } from './billing/opFreeView';
 
 function cn(...inputs) {
     return twMerge(clsx(inputs));
@@ -14,6 +19,7 @@ function cn(...inputs) {
 
 const App = () => {
     const auth = useAuth();
+    const { isPro, openUpgrade } = useEntitlement();
 
     // --- Market Auto-Reconnect on market open ---
     const prevMarketOpenRef = useRef(false);
@@ -120,6 +126,7 @@ const App = () => {
 
     // --- Global Notification Logic ---
     const addGlobalNotification = useCallback((details) => {
+        if (!isPro) return;
         setActiveNotifications(prev => {
             if (prev.find(n => n.id === details.id)) return prev;
             return [...prev, { ...details, expires: Date.now() + 5000 }];
@@ -127,7 +134,7 @@ const App = () => {
         setTimeout(() => {
             setActiveNotifications(prev => prev.filter(n => n.id !== details.id));
         }, 5000);
-    }, []);
+    }, [isPro]);
 
     // --- Monitor Management ---
     const handleAddMonitor = () => {
@@ -143,6 +150,10 @@ const App = () => {
         }));
         setActiveMonitorId(newId);
     };
+
+    const addMonitor = useProAction(handleAddMonitor);
+    const setColumns = useProAction(() => setMonitorLayouts(prev => ({ ...prev, [activeMonitorId]: 'vertical' })));
+    const view = freeView({ isPro, monitors, activeMonitorId, layouts: monitorLayouts, settings: monitorSettings });
 
     const handleRemoveMonitor = (id) => {
         if (monitors.length <= 1) return;
@@ -169,8 +180,8 @@ const App = () => {
         }));
     };
 
-    const currentSettings = monitorSettings[activeMonitorId] || { config: true, ceDepth: true, peDepth: true, logs: true };
-    const currentLayout = monitorLayouts[activeMonitorId] || 'original';
+    const currentSettings = view.settingsFor(view.activeId);
+    const currentLayout = view.layoutFor(view.activeId);
 
     // Dynamic Sidebar Elements based on Layout
     const sidebarElements = currentLayout === 'vertical'
@@ -242,6 +253,7 @@ const App = () => {
                     <div className="mt-2 flex items-center justify-between text-[10px] text-white/50">
                         <span className="truncate" title={auth.profile?.email || ''}>{auth.profile?.full_name || auth.profile?.email}</span>
                         <div className="flex items-center gap-2">
+                            <PlanChip />
                             {auth.profile?.role === 'admin' && <a href="/admin" className="text-[#38bdf8] hover:underline">Admin</a>}
                             <button type="button" onClick={() => auth.signOut()} className="inline-flex items-center gap-1 hover:text-white" aria-label="Sign out"><LogOut size={10} /> Sign out</button>
                         </div>
@@ -271,12 +283,13 @@ const App = () => {
                             <LayoutGrid size={12} /> Grid
                         </button>
                         <button
-                            onClick={() => setMonitorLayouts(prev => ({ ...prev, [activeMonitorId]: 'vertical' }))}
+                            onClick={setColumns}
                             className={cn("flex-1 py-1.5 rounded text-[10px] font-bold flex items-center justify-center gap-1.5 transition-all",
                                 currentLayout === 'vertical' ? "bg-blue-600 text-white shadow-md shadow-blue-500/20" : "text-white/40 hover:text-white hover:bg-white/5"
                             )}
                         >
                             <Columns size={12} /> Columns
+                            {!isPro && <ProBadge className="ml-1" />}
                         </button>
                     </div>
                 </div>
@@ -285,13 +298,13 @@ const App = () => {
                 <div className="p-3 overflow-y-auto max-h-[30vh] border-b border-white/5">
                     <p className="text-[10px] uppercase text-white/20 font-bold tracking-wider mb-2 px-1">Watchlist</p>
                     <div className="space-y-1">
-                        {monitors.map((m, idx) => (
+                        {view.monitors.map((m, idx) => (
                             <button
                                 key={m.id}
                                 onClick={() => setActiveMonitorId(m.id)}
                                 className={cn(
                                     "w-full text-left px-3 py-2 rounded-lg transition-all text-xs flex items-center justify-between group",
-                                    activeMonitorId === m.id
+                                    view.activeId === m.id
                                         ? "bg-blue-600/10 text-blue-400 border border-blue-500/20"
                                         : "text-white/50 hover:bg-white/5 hover:text-white"
                                 )}
@@ -306,8 +319,9 @@ const App = () => {
                                 )}
                             </button>
                         ))}
-                        <button onClick={handleAddMonitor} className="w-full py-2 mt-2 border border-dashed border-white/10 rounded-lg text-white/30 text-[10px] hover:border-white/30 hover:text-white transition-colors flex items-center justify-center gap-1">
+                        <button onClick={addMonitor} className="w-full py-2 mt-2 border border-dashed border-white/10 rounded-lg text-white/30 text-[10px] hover:border-white/30 hover:text-white transition-colors flex items-center justify-center gap-1">
                             <Plus size={12} /> Add Tab
+                            {!isPro && <ProBadge className="ml-1" />}
                         </button>
                     </div>
                 </div>
@@ -319,6 +333,11 @@ const App = () => {
                         <span className="text-[8px] text-white/20 font-mono tracking-tighter">LIVE</span>
                     </div>
                     <div className="flex-1 overflow-y-auto p-2 space-y-2 scrollbar-none">
+                        {!isPro ? (
+                            <button type="button" onClick={openUpgrade} className="m-3 flex flex-col items-center gap-2 rounded border border-dashed border-white/10 p-4 text-[10px] text-white/40 hover:text-white">
+                                <ProBadge /> Big-order alerts are a Pro feature
+                            </button>
+                        ) : (
                         <AnimatePresence initial={false}>
                             {activeNotifications.map((n) => (
                                 <motion.div
@@ -364,7 +383,8 @@ const App = () => {
                                 </motion.div>
                             ))}
                         </AnimatePresence>
-                        {activeNotifications.length === 0 && (
+                        )}
+                        {isPro && activeNotifications.length === 0 && (
                             <div className="h-full flex flex-col items-center justify-center opacity-10 py-8">
                                 <Database size={24} />
                                 <span className="text-[9px] mt-2">No active alerts</span>
@@ -377,34 +397,42 @@ const App = () => {
                 <div className="p-3 bg-black/20">
                     <p className="text-[10px] uppercase text-white/20 font-bold tracking-wider mb-2 px-1">Elements</p>
                     <div className="space-y-1">
-                        {sidebarElements.map(item => (
-                            <button
-                                key={item.id}
-                                onClick={() => toggleElement(item.id)}
-                                className="w-full flex items-center justify-between px-3 py-2 rounded-lg hover:bg-white/5 text-xs text-white/70 transition-colors"
-                            >
-                                <span>{item.label}</span>
-                                {currentSettings[item.id] ? <Eye size={14} className="text-blue-400" /> : <EyeOff size={14} className="text-white/20" />}
-                            </button>
-                        ))}
+                        {sidebarElements.map(item => {
+                            const locked = item.id === 'logs' && !isPro;
+                            return (
+                                <button
+                                    key={item.id}
+                                    onClick={() => locked ? openUpgrade() : toggleElement(item.id)}
+                                    className="w-full flex items-center justify-between px-3 py-2 rounded-lg hover:bg-white/5 text-xs text-white/70 transition-colors"
+                                >
+                                    <span className="flex items-center">
+                                        {item.label}
+                                        {locked && <ProBadge className="ml-1" />}
+                                    </span>
+                                    {currentSettings[item.id] ? <Eye size={14} className="text-blue-400" /> : <EyeOff size={14} className="text-white/20" />}
+                                </button>
+                            );
+                        })}
                     </div>
                 </div>
             </aside>
 
             {/* --- MAIN CONTENT --- */}
             <main className="flex-1 relative overflow-hidden bg-[#050505] p-3">
-                {monitors.map(m => (
+                <BillingBanner />
+                {view.monitors.map(m => (
                     <MonitorDashboard
                         key={m.id}
                         id={m.id}
-                        isActive={activeMonitorId === m.id}
+                        isActive={view.activeId === m.id}
                         depthData={depthData}
                         status={status}
                         subscribe={subscribe}
                         addGlobalNotification={addGlobalNotification}
-                        visibleElements={monitorSettings[m.id]}
+                        visibleElements={view.settingsFor(m.id)}
                         onRemove={handleRemoveMonitor}
-                        layoutMode={monitorLayouts[m.id] || 'original'}
+                        layoutMode={view.layoutFor(m.id)}
+                        alertsEnabled={isPro}
                         onLayoutChange={(mode) => setMonitorLayouts(prev => ({ ...prev, [m.id]: mode }))}
                         depthEvents={depthEvents.current}
                         isSidebarVisible={isSidebarVisible}

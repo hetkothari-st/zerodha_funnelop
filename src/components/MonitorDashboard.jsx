@@ -127,6 +127,7 @@ const MonitorDashboard = ({
     depthEvents, // Low-latency event bus
     isSidebarVisible,
     onToggleSidebar,
+    alertsEnabled = true,
 }) => {
     // --- Layout State is now controlled by Parent (App.jsx) ---
 
@@ -176,7 +177,7 @@ const MonitorDashboard = ({
 
     // --- Direct Audio Link (Low Latency) ---
     useEffect(() => {
-        if (!depthEvents || !isActive) return; // Guard: Only process alerts for active tab
+        if (!depthEvents || !isActive || !alertsEnabled) return; // Guard: Only process alerts for active tab
 
         // Optimization: Use a Map for O(1) token lookup to avoid .find() on every packet
         const monitoredMap = new Map();
@@ -204,7 +205,7 @@ const MonitorDashboard = ({
 
         depthEvents.addEventListener('depth-packet', handlePacket);
         return () => depthEvents.removeEventListener('depth-packet', handlePacket);
-    }, [depthEvents, monitoredTokens, isActive]); // Added isActive dependency
+    }, [depthEvents, monitoredTokens, isActive, alertsEnabled]); // Added isActive dependency
 
     // --- Depth Data Ref (built from events, not prop) ---
     const latestDepthData = useRef({});
@@ -226,6 +227,7 @@ const MonitorDashboard = ({
 
     useEffect(() => {
         if (monitoredTokens.length === 0 || !isActive) return; // Guard: Stop background polling
+        if (!alertsEnabled) return;
 
         const pollInterval = setInterval(() => {
             if (status !== 'Connected' && status !== 'CONNECTED' && status !== 'connected') return;
@@ -317,7 +319,7 @@ const MonitorDashboard = ({
         }, 100);
 
         return () => clearInterval(pollInterval);
-    }, [monitoredTokens, showAllPrices, addGlobalNotification, status, isActive]); // Added isActive
+    }, [monitoredTokens, showAllPrices, addGlobalNotification, status, isActive, alertsEnabled]); // Added isActive
 
     // --- Log Retention & Cleanup ---
     useEffect(() => {

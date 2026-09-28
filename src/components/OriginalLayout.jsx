@@ -4,6 +4,8 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import contractsData from '../contracts_nsefo.json';
+import { useEntitlement } from '../billing/EntitlementProvider';
+import { ProBadge, useProAction } from '../billing/ProGate';
 
 function cn(...inputs) {
     return twMerge(clsx(inputs));
@@ -582,6 +584,9 @@ const OriginalLayout = memo(({
         if (newTokens.length > 0) onAddTokens(newTokens);
     };
 
+    const { isPro } = useEntitlement();
+    const quickStrikes = useProAction(handleQuickStrikes);
+
     const monitoredTokensRef = useRef(monitoredTokens);
     monitoredTokensRef.current = monitoredTokens;
 
@@ -716,8 +721,9 @@ const OriginalLayout = memo(({
                     </div>
 
                     <div className="flex gap-2 ml-auto">
-                        <button onClick={handleQuickStrikes} className="bg-amber-600 hover:bg-amber-500 text-white font-bold py-1 px-3 rounded text-[10px] h-7 shadow-lg shadow-amber-500/20 flex items-center gap-2" title="Add 1 ATM + 3 ITM + 3 OTM (CE & PE)">
+                        <button onClick={quickStrikes} className="bg-amber-600 hover:bg-amber-500 text-white font-bold py-1 px-3 rounded text-[10px] h-7 shadow-lg shadow-amber-500/20 flex items-center gap-2" title="Add 1 ATM + 3 ITM + 3 OTM (CE & PE)">
                             <Zap size={10} /> Quick Strikes
+                            {!isPro && <ProBadge />}
                         </button>
                         <button onClick={handleAdd} className="bg-blue-600 hover:bg-blue-500 text-white font-bold py-1 px-4 rounded text-[10px] h-7 shadow-lg shadow-blue-500/20 flex items-center gap-2">
                             Add to Monitor
