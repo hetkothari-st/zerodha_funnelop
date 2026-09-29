@@ -90,7 +90,26 @@ describe('UpgradeModal', () => {
         setup({ entitlement: { isPro: true, priceLabel: '₹499/month', cancelAtPeriodEnd: true, resumable: true, until: '2026-10-28T00:00:00.000Z' } });
         expect(screen.getByRole('button', { name: 'Resume Pro' })).toBeInTheDocument();
         expect(screen.queryByRole('button', { name: 'Upgrade to Pro' })).toBeNull();
-        expect(screen.getByText(/No charge until 28 Oct 2026; renews monthly after that\./)).toBeInTheDocument();
+        expect(screen.getByText(/No subscription charge until 28 Oct 2026; renews monthly after that\./)).toBeInTheDocument();
+    });
+    it('Minor 3: "resuming" is captured once at mount — an entitlement change mid-flow does not flip the button/copy', () => {
+        const refresh = vi.fn(async () => ({ ok: true, data: { plan: 'pro' } }));
+        const checkout = { loadCheckout: vi.fn(async () => function R() {}), openCheckout: vi.fn(async () => ({ outcome: 'paid' })) };
+        const { rerender } = render(
+            <EntitlementContext.Provider value={{ isPro: true, priceLabel: '₹499/month', cancelAtPeriodEnd: true, resumable: true, until: '2026-10-28T00:00:00.000Z', refresh }}>
+                <UpgradeModal onClose={vi.fn()} checkout={checkout} />
+            </EntitlementContext.Provider>,
+        );
+        expect(screen.getByRole('button', { name: 'Resume Pro' })).toBeInTheDocument();
+        // Simulate the entitlement context updating mid-flow (e.g. a poll resolving) to a
+        // non-resumable state — the modal's own "resuming" snapshot must not change underneath it.
+        rerender(
+            <EntitlementContext.Provider value={{ isPro: true, priceLabel: '₹499/month', cancelAtPeriodEnd: false, resumable: false, until: null, refresh }}>
+                <UpgradeModal onClose={vi.fn()} checkout={checkout} />
+            </EntitlementContext.Provider>,
+        );
+        expect(screen.getByRole('button', { name: 'Resume Pro' })).toBeInTheDocument();
+        expect(screen.getByText(/No subscription charge until 28 Oct 2026; renews monthly after that\./)).toBeInTheDocument();
     });
     it('resume: clicking Resume Pro drives the same subscribe → checkout → success flow', async () => {
         const { checkout } = setup({ entitlement: { isPro: true, priceLabel: '₹499/month', cancelAtPeriodEnd: true, resumable: true, until: '2026-10-28T00:00:00.000Z' } });

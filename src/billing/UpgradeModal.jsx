@@ -14,7 +14,10 @@ export default function UpgradeModal({ onClose, pollIntervalMs = 2000, pollTimeo
     const { apiFetch, profile } = useAuth();
     const ent = useEntitlement();
     const { priceLabel, refresh } = ent;
-    const resuming = Boolean(ent.cancelAtPeriodEnd && ent.resumable);
+    // Minor 3: captured once at mount, not re-derived every render — a poll resolving mid-flow
+    // (e.g. once the resumed subscription activates) must not flip the button/copy underneath
+    // the user while they're still looking at (or acting on) this modal.
+    const [{ resuming, resumeUntil }] = useState(() => ({ resuming: Boolean(ent.cancelAtPeriodEnd && ent.resumable), resumeUntil: ent.until }));
     const c = theme.classes;
     const [phase, setPhase] = useState('idle'); // idle | starting | checkout | activating | success | timeout
     const [message, setMessage] = useState(null);
@@ -89,7 +92,7 @@ export default function UpgradeModal({ onClose, pollIntervalMs = 2000, pollTimeo
                     </button>
                 )}
                 {resuming ? (
-                    <p className={c.muted}>No charge until {fmt(ent.until)}; renews monthly after that.</p>
+                    <p className={c.muted}>No subscription charge until {fmt(resumeUntil)}; renews monthly after that.</p>
                 ) : (
                     <p className={c.muted}>Renews monthly via UPI AutoPay or card. Cancel anytime; Pro stays until the period ends.</p>
                 )}

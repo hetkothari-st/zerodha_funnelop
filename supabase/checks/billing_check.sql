@@ -10,7 +10,8 @@ insert into auth.users (id, email, aud, role, raw_app_meta_data, raw_user_meta_d
     ('00000000-0000-4000-8000-0000000000a7', 'cxl-in@example.com', 'authenticated', 'authenticated', '{"provider":"email"}', '{}'),
     ('00000000-0000-4000-8000-0000000000a8', 'cxl-out@example.com','authenticated', 'authenticated', '{"provider":"email"}', '{}'),
     ('00000000-0000-4000-8000-0000000000a9', 'halted@example.com', 'authenticated', 'authenticated', '{"provider":"email"}', '{}'),
-    ('00000000-0000-4000-8000-0000000000aa', 'resume@example.com', 'authenticated', 'authenticated', '{"provider":"email"}', '{}');
+    ('00000000-0000-4000-8000-0000000000aa', 'resume@example.com', 'authenticated', 'authenticated', '{"provider":"email"}', '{}'),
+    ('00000000-0000-4000-8000-0000000000ab', 'resume-boundary@example.com', 'authenticated', 'authenticated', '{"provider":"email"}', '{}');
 
 update public.profiles set role = 'admin' where id = '00000000-0000-4000-8000-0000000000a2';
 update public.profiles set comp_pro = true where id = '00000000-0000-4000-8000-0000000000a3';
@@ -28,6 +29,15 @@ insert into public.subscriptions (user_id, razorpay_subscription_id, status, cur
 insert into public.subscriptions (user_id, razorpay_subscription_id, status, current_end, cancel_at_period_end) values
     ('00000000-0000-4000-8000-0000000000aa', 'sub_scheduled_cancel', 'active', now() + interval '10 days', true);
 
+-- I2: the boundary case a resumed row's pre-filled current_end exists to cover. The OLD row has
+-- already actually transitioned to 'cancelled' (terminal, past its current_end — the real
+-- post-cancellation webhook already landed) while the NEW (resumed) row is 'authenticated' with
+-- current_end pre-filled to what was the old row's current_end. Entitlement must come from the
+-- new row alone, with no gap: pro/subscription.
+insert into public.subscriptions (user_id, razorpay_subscription_id, status, current_end, cancel_at_period_end) values
+    ('00000000-0000-4000-8000-0000000000ab', 'sub_boundary_old', 'cancelled',     now() - interval '1 day', false),
+    ('00000000-0000-4000-8000-0000000000ab', 'sub_boundary_new', 'authenticated', now() + interval '1 day', false);
+
 do $$
 declare
     expected text[][] := array[
@@ -40,7 +50,8 @@ declare
         ['00000000-0000-4000-8000-0000000000a7', 'pro',  'subscription'],
         ['00000000-0000-4000-8000-0000000000a8', 'free', ''],
         ['00000000-0000-4000-8000-0000000000a9', 'free', ''],
-        ['00000000-0000-4000-8000-0000000000aa', 'pro',  'subscription']
+        ['00000000-0000-4000-8000-0000000000aa', 'pro',  'subscription'],
+        ['00000000-0000-4000-8000-0000000000ab', 'pro',  'subscription']
     ];
     r record;
     i int;

@@ -43,7 +43,10 @@ export function createRazorpay({ keyId, keySecret, fetchImpl = fetch, timeoutMs 
                 ...(startAt ? { start_at: startAt } : {}),
             },
         }),
-        cancelSubscription: (id) => call(`/subscriptions/${encodeURIComponent(id)}/cancel`, { method: 'POST', body: { cancel_at_cycle_end: 1 } }),
+        // atCycleEnd=false (cancel_at_cycle_end: 0) cancels immediately — used for a resumed
+        // subscription that hasn't actually started billing yet, where "at cycle end" is
+        // meaningless (there is no cycle running); atCycleEnd=true (default) is the normal case.
+        cancelSubscription: (id, { atCycleEnd = true } = {}) => call(`/subscriptions/${encodeURIComponent(id)}/cancel`, { method: 'POST', body: { cancel_at_cycle_end: atCycleEnd ? 1 : 0 } }),
         fetchSubscription: (id) => call(`/subscriptions/${encodeURIComponent(id)}`),
     };
 }
