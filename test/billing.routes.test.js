@@ -56,7 +56,7 @@ function fakeBilling({ ent = { plan: 'free', source: null, until: null }, subs =
 }
 
 function fakeRazorpay({ fail = false, remote = {} } = {}) {
-    const log = { created: [], cancelled: [] };
+    const log = { created: [], cancelled: [], fetched: [] };
     return {
         log,
         createSubscription: async ({ planId, userId, startAt }) => {
@@ -69,7 +69,11 @@ function fakeRazorpay({ fail = false, remote = {} } = {}) {
             log.cancelled.push({ id, atCycleEnd });
             return { id, status: 'active' };
         },
-        fetchSubscription: async (id) => { if (!remote[id]) throw new RazorpayError('not found', 404); return remote[id]; },
+        fetchSubscription: async (id) => {
+            log.fetched.push(id);
+            if (!remote[id]) throw new RazorpayError('not found', 404);
+            return remote[id];
+        },
     };
 }
 
@@ -366,6 +370,41 @@ test('I4: reused created row is treated as stale when its remote start_at is alr
         assert.equal((await res.json()).subscriptionId, 'sub_new1');
         assert.equal(razorpay.log.created[0].startAt, Math.floor(Date.parse('2026-10-28T00:00:00.000Z') / 1000));
         assert.equal(billing.subs.find((s) => s.razorpay_subscription_id === 'sub_past_start').status, 'expired');
+    } finally { await srv.close(); }
+});
+
+// m1: without a scheduled-cancel row at all, a Pro/subscription user must never reach the
+// reuse/fallback logic below — that logic's fallback create has no resume context to delay a
+// charge with, so it must be unreachable for Pro, not merely rare.
+test('m1: subscribe — Pro/subscription, an open "created" row but no scheduled-cancel row → 409 before any reuse/fallback logic runs', async () => {
+    const billing = fakeBilling({
+        ent: { plan: 'pro', source: 'subscription', until: null },
+        subs: [{ user_id: USER, razorpay_subscription_id: 'sub_leftover', status: 'created', cancel_at_period_end: false }],
+    });
+    const remote = { sub_leftover: { id: 'sub_leftover', status: 'created', plan_id: 'plan_1' } }; // would otherwise be reusable
+    const { srv, headers, razorpay } = await setup({ billing, razorpay: fakeRazorpay({ remote }) });
+    try {
+        const res = await fetch(`${srv.url}/api/billing/subscribe`, { method: 'POST', headers });
+        assert.equal(res.status, 409);
+        assert.equal((await res.json()).message, 'You already have Pro.');
+        // Never even looked at Razorpay's copy of the leftover row, let alone created a new one.
+        assert.equal(razorpay.log.fetched.length, 0);
+        assert.equal(razorpay.log.created.length, 0);
+    } finally { await srv.close(); }
+});
+
+// m2: Razorpay may fill a normal (non-resume) subscription's start_at with its creation time,
+// which is trivially "in the past" moments later — that must never make a Free user's ordinary
+// reused row look stale. The past-start_at staleness check is a resume-only safeguard (m2/I4).
+test('m2: Free subscribe — a reused created row is still reused even when its remote start_at is already in the past', async () => {
+    const billing = fakeBilling({ subs: [{ user_id: USER, razorpay_subscription_id: 'sub_old', status: 'created' }] }); // ent defaults to free
+    const remote = { sub_old: { id: 'sub_old', status: 'created', plan_id: 'plan_1', start_at: Math.floor(Date.now() / 1000) - 3600 } };
+    const { srv, headers, razorpay } = await setup({ billing, razorpay: fakeRazorpay({ remote }) });
+    try {
+        const body = await (await fetch(`${srv.url}/api/billing/subscribe`, { method: 'POST', headers })).json();
+        assert.equal(body.subscriptionId, 'sub_old');
+        assert.equal(razorpay.log.created.length, 0);
+        assert.equal(billing.subs.find((s) => s.razorpay_subscription_id === 'sub_old').status, 'created');
     } finally { await srv.close(); }
 });
 
@@ -689,14 +728,20 @@ test('cancel: already flagged cancel_at_period_end is a no-op (does not call Raz
 // I1: cancelling a resumed subscription that hasn't actually started billing yet — nothing is
 // running to "let finish a cycle", and the OLD scheduled-cancel row is what still covers Pro
 // until its own current_end either way, so cancel it immediately (cancel_at_cycle_end: 0).
-test('I1: cancel — resumed row still "authenticated" with current_end null (never started) → immediate cancel, until = old scheduled row\'s current_end', async () => {
+// N1: every resume sets Razorpay's start_at = the old scheduled row's current_end, so whether
+// the resumed subscription has actually started is fully decided by comparing
+// scheduled.current_end to now — no need to ask Razorpay at all, and a failing/slow
+// razorpay.fetchSubscription must have zero effect on this decision.
+test('N1: cancel — resumed row not yet started (scheduled.current_end still future) → immediate cancel, decided locally (razorpay.fetchSubscription is never consulted)', async () => {
     const billing = fakeBilling({
         subs: [
             { user_id: USER, razorpay_subscription_id: 'sub_old', status: 'active', current_end: '2026-10-28T00:00:00.000Z', cancel_at_period_end: true },
-            { user_id: USER, razorpay_subscription_id: 'sub_resumed', status: 'authenticated', current_end: null, cancel_at_period_end: false },
+            { user_id: USER, razorpay_subscription_id: 'sub_resumed', status: 'authenticated', current_end: '2026-10-28T00:00:00.000Z', cancel_at_period_end: false },
         ],
     });
-    const { srv, headers, razorpay } = await setup({ billing });
+    const razorpay = fakeRazorpay();
+    razorpay.fetchSubscription = async () => { throw new RazorpayError('down', 0); }; // must have no effect
+    const { srv, headers } = await setup({ billing, razorpay });
     try {
         const res = await fetch(`${srv.url}/api/billing/cancel`, { method: 'POST', headers });
         assert.equal(res.status, 200);
@@ -706,22 +751,19 @@ test('I1: cancel — resumed row still "authenticated" with current_end null (ne
     } finally { await srv.close(); }
 });
 
-test('I1: cancel — resumed row "created" with a pre-filled current_end but remote start_at still in the future (never started) → immediate cancel', async () => {
+test('N1: cancel — resumed row already past its scheduled start time (scheduled.current_end in the past) → normal at-cycle-end cancel', async () => {
     const billing = fakeBilling({
         subs: [
-            { user_id: USER, razorpay_subscription_id: 'sub_old', status: 'active', current_end: '2026-10-28T00:00:00.000Z', cancel_at_period_end: true },
-            // I2: current_end pre-filled from the scheduled row (not null), so "hasn't started"
-            // must be detected via Razorpay's own start_at, not a null current_end.
-            { user_id: USER, razorpay_subscription_id: 'sub_resumed', status: 'created', current_end: '2026-10-28T00:00:00.000Z', cancel_at_period_end: false },
+            { user_id: USER, razorpay_subscription_id: 'sub_old', status: 'active', current_end: new Date(Date.now() - 3600000).toISOString(), cancel_at_period_end: true },
+            { user_id: USER, razorpay_subscription_id: 'sub_resumed', status: 'authenticated', current_end: '2026-11-28T00:00:00.000Z', cancel_at_period_end: false },
         ],
     });
-    const remote = { sub_resumed: { id: 'sub_resumed', status: 'created', start_at: Math.floor(Date.parse('2026-10-28T00:00:00.000Z') / 1000) } };
-    const { srv, headers, razorpay } = await setup({ billing, razorpay: fakeRazorpay({ remote }) });
+    const { srv, headers, razorpay } = await setup({ billing });
     try {
         const res = await fetch(`${srv.url}/api/billing/cancel`, { method: 'POST', headers });
         assert.equal(res.status, 200);
-        assert.deepEqual(await res.json(), { ok: true, until: '2026-10-28T00:00:00.000Z' });
-        assert.deepEqual(razorpay.log.cancelled, [{ id: 'sub_resumed', atCycleEnd: false }]);
+        assert.deepEqual(await res.json(), { ok: true, until: '2026-11-28T00:00:00.000Z' });
+        assert.deepEqual(razorpay.log.cancelled, [{ id: 'sub_resumed', atCycleEnd: true }]);
     } finally { await srv.close(); }
 });
 

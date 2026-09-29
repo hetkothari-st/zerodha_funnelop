@@ -100,20 +100,22 @@ export function createBillingRouter({ auth, billing, razorpay, planId, keyId, we
                 return sendError(res, 'auth_unavailable', 'Billing is temporarily unavailable.');
             }
 
-            if (scheduled) {
-                if (!scheduledIsUsable(scheduled)) {
-                    return sendError(res, 'conflict', 'Your Pro ends shortly — subscribe again once it ends.');
-                }
-                resumeStartAt = Math.floor(Date.parse(scheduled.current_end) / 1000);
-                resumeCurrentEnd = scheduled.current_end;
+            // m1: no scheduled-cancel row at all means nothing to resume, full stop — return
+            // before any reuse/fallback logic runs, so a Pro user can never reach the generic
+            // fallback create below (which has no resume context to delay a charge with).
+            if (!scheduled) return sendError(res, 'conflict', 'You already have Pro.');
+
+            if (!scheduledIsUsable(scheduled)) {
+                return sendError(res, 'conflict', 'Your Pro ends shortly — subscribe again once it ends.');
             }
+            resumeStartAt = Math.floor(Date.parse(scheduled.current_end) / 1000);
+            resumeCurrentEnd = scheduled.current_end;
 
             // Minor 1: a real, non-cancelling open row that isn't a resume-in-progress 'created'
             // row means genuinely already Pro with nothing to resume.
             if (open && open.status !== 'created') return sendError(res, 'conflict', 'You already have Pro.');
 
             if (!open) {
-                if (!scheduled) return sendError(res, 'conflict', 'You already have Pro.');
                 // Resume Pro after cancelling: the old row stays 'active'/cancel_at_period_end
                 // until current_end, so start the new subscription exactly then — no charge now.
                 let sub;
@@ -180,10 +182,14 @@ export function createBillingRouter({ auth, billing, razorpay, planId, keyId, we
                 return sendError(res, 'conflict', 'Your subscription is being activated. Refresh in a minute.');
             }
 
-            // I4: a remote start_at already in the past is not safely reusable either — reusing
-            // it would let Razorpay charge as soon as it's authenticated, defeating a resume's
-            // whole point of a delayed start.
-            const remoteStartPast = Boolean(remote?.start_at) && remote.start_at * 1000 <= Date.now();
+            // I4/m2: a remote start_at already in the past is not safely reusable in a resume
+            // context — reusing it would let Razorpay charge as soon as it's authenticated,
+            // defeating a resume's whole point of a delayed start. This only applies when we're
+            // actually resuming (resumeStartAt is set, i.e. the Pro/scheduled branch above ran):
+            // Razorpay may fill an ordinary Free subscription's start_at with its creation time,
+            // which would otherwise make an ordinary, still-valid reused row look stale moments
+            // after it was created.
+            const remoteStartPast = resumeStartAt !== undefined && Boolean(remote?.start_at) && remote.start_at * 1000 <= Date.now();
             const reusable = remote?.plan_id === planId && remote.status === 'created' && !remoteStartPast;
             if (reusable) return res.json({ subscriptionId: open.razorpay_subscription_id, keyId });
 
@@ -261,22 +267,11 @@ export function createBillingRouter({ auth, billing, razorpay, planId, keyId, we
             return sendError(res, 'bad_request', 'No active subscription to cancel.');
         }
 
-        let notStarted = false;
-        if (scheduled) {
-            if (open.current_end == null) {
-                notStarted = true;
-            } else {
-                // I2 pre-fills current_end on a resumed row, so a null check alone can't tell
-                // "hasn't started" any more — ask Razorpay directly.
-                let remote = null;
-                try {
-                    remote = await razorpay.fetchSubscription(open.razorpay_subscription_id);
-                } catch (err) {
-                    console.error('[billing] cancel: fetchSubscription failed (best-effort, defaulting to at-cycle-end):', err.message);
-                }
-                if (remote?.start_at && remote.start_at * 1000 > Date.now()) notStarted = true;
-            }
-        }
+        // N1: every resume sets Razorpay's start_at = scheduled.current_end (see /subscribe), so
+        // whether the resumed row has actually started billing is fully decided by that
+        // comparison — no need to ask Razorpay, and nothing here should depend on
+        // razorpay.fetchSubscription succeeding.
+        const notStarted = Boolean(scheduled) && Date.parse(scheduled.current_end) > Date.now();
 
         try {
             await razorpay.cancelSubscription(open.razorpay_subscription_id, { atCycleEnd: !notStarted });
