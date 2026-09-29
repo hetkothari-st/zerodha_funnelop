@@ -22,11 +22,21 @@ test('entitlement calls the rpc and defaults to free', async () => {
     assert.deepEqual(await empty.store.entitlement('u1'), { plan: 'free', source: null, until: null });
 });
 
-test('openSubscription filters on open statuses', async () => {
+test('openSubscription filters on open statuses and excludes scheduled cancellations', async () => {
     const { calls, store } = rest(() => ({ body: [{ razorpay_subscription_id: 'sub_1', status: 'created' }] }));
     assert.equal((await store.openSubscription('u1')).razorpay_subscription_id, 'sub_1');
     assert.match(calls[0].url, /user_id=eq\.u1/);
     assert.match(calls[0].url, /status=in\.\(created,authenticated,active,pending\)/);
+    assert.match(calls[0].url, /cancel_at_period_end=is\.false/);
+});
+
+test('scheduledCancel returns the newest open row that is flagged cancel_at_period_end', async () => {
+    const { calls, store } = rest(() => ({ body: [{ razorpay_subscription_id: 'sub_old', status: 'active', cancel_at_period_end: true }] }));
+    assert.equal((await store.scheduledCancel('u1')).razorpay_subscription_id, 'sub_old');
+    assert.match(calls[0].url, /user_id=eq\.u1/);
+    assert.match(calls[0].url, /status=in\.\(created,authenticated,active,pending\)/);
+    assert.match(calls[0].url, /cancel_at_period_end=is\.true/);
+    assert.match(calls[0].url, /order=created_at\.desc/);
 });
 
 test('recordEvent: true when inserted, false on duplicate', async () => {

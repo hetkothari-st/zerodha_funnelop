@@ -14,13 +14,22 @@ export function createBillingRouter({ auth, billing, razorpay, planId, keyId, we
 
     router.get('/api/billing/status', ...auth.requireUser, wrap(async (req, res) => {
         try {
-            const [ent, sub] = await Promise.all([billing.entitlement(req.auth.userId), billing.latestSubscription(req.auth.userId)]);
+            const userId = req.auth.userId;
+            const [ent, sub] = await Promise.all([billing.entitlement(userId), billing.latestSubscription(userId)]);
+            // resumable: Pro via subscription, scheduled to cancel, and no newer (resume) row
+            // already open. Cheap to skip for free/comp/admin, who can never resume.
+            let resumable = false;
+            if (ent.source === 'subscription') {
+                const [open, scheduled] = await Promise.all([billing.openSubscription(userId), billing.scheduledCancel(userId)]);
+                resumable = Boolean(scheduled && !open);
+            }
             res.json({
                 plan: ent.plan, source: ent.source ?? null, until: ent.until ?? null,
                 status: sub?.status ?? null,
                 cancelAtPeriodEnd: Boolean(sub?.cancel_at_period_end),
                 manageUrl: sub?.short_url ?? null,
                 priceLabel,
+                resumable,
             });
         } catch (err) {
             console.error('[billing] status failed:', err.message);
@@ -30,14 +39,58 @@ export function createBillingRouter({ auth, billing, razorpay, planId, keyId, we
 
     router.post('/api/billing/subscribe', ...auth.requireUser, wrap(async (req, res) => {
         const userId = req.auth.userId;
-        let ent, open;
+        let ent;
         try {
-            [ent, open] = await Promise.all([billing.entitlement(userId), billing.openSubscription(userId)]);
+            ent = await billing.entitlement(userId);
         } catch (err) {
             console.error('[billing] subscribe lookup failed:', err.message);
             return sendError(res, 'auth_unavailable', 'Billing is temporarily unavailable.');
         }
-        if (ent.plan === 'pro') return sendError(res, 'conflict', 'You already have Pro.');
+
+        let open;
+        if (ent.plan === 'pro') {
+            // Only a subscription can be resumed; comp/admin Pro has nothing to undo.
+            if (ent.source !== 'subscription') return sendError(res, 'conflict', 'You already have Pro.');
+            let scheduled;
+            try {
+                [open, scheduled] = await Promise.all([billing.openSubscription(userId), billing.scheduledCancel(userId)]);
+            } catch (err) {
+                console.error('[billing] subscribe lookup failed:', err.message);
+                return sendError(res, 'auth_unavailable', 'Billing is temporarily unavailable.');
+            }
+            if (!open) {
+                // Resume Pro after cancelling: the old row stays 'active'/cancel_at_period_end
+                // until current_end, so start the new subscription exactly then — no charge now.
+                const resumeAtMs = scheduled?.current_end ? Date.parse(scheduled.current_end) : NaN;
+                if (!(resumeAtMs > Date.now())) return sendError(res, 'conflict', 'You already have Pro.');
+                let sub;
+                try {
+                    sub = await razorpay.createSubscription({ planId, userId, startAt: Math.floor(resumeAtMs / 1000) });
+                } catch (err) {
+                    console.error('[billing] razorpay create (resume) failed:', err.message);
+                    return sendError(res, 'payments_unavailable');
+                }
+                try {
+                    await billing.insertSubscription(userId, toRow(sub));
+                } catch (err) {
+                    // Another request (double click, second tab) inserted first: hand back its subscription.
+                    const winner = await billing.openSubscription(userId).catch(() => null);
+                    if (winner?.status === 'created') return res.json({ subscriptionId: winner.razorpay_subscription_id, keyId });
+                    console.error('[billing] resume subscription insert failed:', err.message);
+                    return sendError(res, 'auth_unavailable', 'Billing is temporarily unavailable.');
+                }
+                return res.json({ subscriptionId: sub.id, keyId, resume: true });
+            }
+            // open exists: an in-progress/duplicate subscribe attempt — fall through to the
+            // same reuse/'created' handling as a first-time subscribe, below.
+        } else {
+            try {
+                open = await billing.openSubscription(userId);
+            } catch (err) {
+                console.error('[billing] subscribe lookup failed:', err.message);
+                return sendError(res, 'auth_unavailable', 'Billing is temporarily unavailable.');
+            }
+        }
 
         if (open?.status === 'created') {
             // The local row may be stale: gone at Razorpay, for a different plan (e.g. plan
@@ -111,8 +164,20 @@ export function createBillingRouter({ auth, billing, razorpay, planId, keyId, we
             console.error('[billing] cancel lookup failed:', err.message);
             return sendError(res, 'auth_unavailable', 'Billing is temporarily unavailable.');
         }
-        if (!open || !CANCELLABLE.has(open.status)) return sendError(res, 'bad_request', 'No active subscription to cancel.');
-        if (open.cancel_at_period_end) return res.json({ ok: true, until: open.current_end ?? null });
+        if (!open) {
+            // openSubscription excludes rows already scheduled to cancel: if that's the only
+            // open row, there's nothing new to cancel — keep the existing short-circuit response.
+            let scheduled;
+            try {
+                scheduled = await billing.scheduledCancel(req.auth.userId);
+            } catch (err) {
+                console.error('[billing] cancel lookup failed:', err.message);
+                return sendError(res, 'auth_unavailable', 'Billing is temporarily unavailable.');
+            }
+            if (scheduled) return res.json({ ok: true, until: scheduled.current_end ?? null });
+            return sendError(res, 'bad_request', 'No active subscription to cancel.');
+        }
+        if (!CANCELLABLE.has(open.status)) return sendError(res, 'bad_request', 'No active subscription to cancel.');
         try {
             await razorpay.cancelSubscription(open.razorpay_subscription_id);
         } catch (err) {

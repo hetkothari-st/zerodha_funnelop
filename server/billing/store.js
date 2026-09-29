@@ -30,8 +30,15 @@ export function createBillingStore({ supabaseUrl, serviceKey, fetchImpl = fetch,
         async latestSubscription(userId) {
             return first(await call(`subscriptions?user_id=eq.${enc(userId)}&select=${SUB_FIELDS}&order=created_at.desc&limit=1`));
         },
+        // Rows scheduled to cancel (cancel_at_period_end=true) are excluded: they no longer
+        // block a new subscription from being created (see scheduledCancel below).
         async openSubscription(userId) {
-            return first(await call(`subscriptions?user_id=eq.${enc(userId)}&status=in.(${OPEN_STATUSES.join(',')})&select=${SUB_FIELDS}&limit=1`));
+            return first(await call(`subscriptions?user_id=eq.${enc(userId)}&status=in.(${OPEN_STATUSES.join(',')})&cancel_at_period_end=is.false&select=${SUB_FIELDS}&limit=1`));
+        },
+        // The newest open-status row that IS scheduled to cancel: the user is still Pro (source
+        // 'subscription') but has undone nothing yet. Used to offer/serve "Resume Pro".
+        async scheduledCancel(userId) {
+            return first(await call(`subscriptions?user_id=eq.${enc(userId)}&status=in.(${OPEN_STATUSES.join(',')})&cancel_at_period_end=is.true&select=${SUB_FIELDS}&order=created_at.desc&limit=1`));
         },
         async getSubscription(subId) {
             return first(await call(`subscriptions?razorpay_subscription_id=eq.${enc(subId)}&select=${SUB_FIELDS}`));

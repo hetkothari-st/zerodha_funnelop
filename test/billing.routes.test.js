@@ -18,7 +18,8 @@ function fakeBilling({ ent = { plan: 'free', source: null, until: null }, subs =
         log, subs,
         entitlement: async () => ent,
         latestSubscription: async (uid) => subs.filter((s) => s.user_id === uid).at(-1) ?? null,
-        openSubscription: async (uid) => subs.find((s) => s.user_id === uid && ['created', 'authenticated', 'active', 'pending'].includes(s.status)) ?? null,
+        openSubscription: async (uid) => subs.find((s) => s.user_id === uid && ['created', 'authenticated', 'active', 'pending'].includes(s.status) && !s.cancel_at_period_end) ?? null,
+        scheduledCancel: async (uid) => subs.filter((s) => s.user_id === uid && ['created', 'authenticated', 'active', 'pending'].includes(s.status) && s.cancel_at_period_end).at(-1) ?? null,
         getSubscription: async (id) => subs.find((s) => s.razorpay_subscription_id === id) ?? null,
         insertSubscription: async (uid, fields) => {
             if (store.failInsert) throw new Error('unique violation');
@@ -42,9 +43,9 @@ function fakeRazorpay({ fail = false, remote = {} } = {}) {
     const log = { created: [], cancelled: [] };
     return {
         log,
-        createSubscription: async ({ planId, userId }) => {
+        createSubscription: async ({ planId, userId, startAt }) => {
             if (fail) throw new RazorpayError('down', 0);
-            log.created.push({ planId, userId });
+            log.created.push({ planId, userId, ...(startAt !== undefined ? { startAt } : {}) });
             return { id: `sub_new${log.created.length}`, status: 'created', current_end: null, short_url: 'https://rzp.io/i/new' };
         },
         cancelSubscription: async (id) => { if (fail) throw new RazorpayError('down', 0); log.cancelled.push(id); return { id, status: 'active' }; },
@@ -84,9 +85,48 @@ test('status: free user with no subscription', async () => {
     try {
         const res = await fetch(`${srv.url}/api/billing/status`, { headers });
         assert.equal(res.status, 200);
-        assert.deepEqual(await res.json(), { plan: 'free', source: null, until: null, status: null, cancelAtPeriodEnd: false, manageUrl: null, priceLabel: '₹499/month' });
+        assert.deepEqual(await res.json(), { plan: 'free', source: null, until: null, status: null, cancelAtPeriodEnd: false, manageUrl: null, priceLabel: '₹499/month', resumable: false });
         assert.equal((await fetch(`${srv.url}/api/billing/status`)).status, 401);
     } finally { await srv.close(); }
+});
+
+test('status: resumable is true only when Pro via subscription has a scheduled cancellation and no newer open row', async () => {
+    const cancelled = await setup({ billing: fakeBilling({
+        ent: { plan: 'pro', source: 'subscription', until: '2026-10-28T00:00:00.000Z' },
+        subs: [{ user_id: USER, razorpay_subscription_id: 'sub_old', status: 'active', current_end: '2026-10-28T00:00:00.000Z', cancel_at_period_end: true }],
+    }) });
+    try {
+        const body = await (await fetch(`${cancelled.srv.url}/api/billing/status`, { headers: cancelled.headers })).json();
+        assert.equal(body.resumable, true);
+        assert.equal(body.cancelAtPeriodEnd, true);
+    } finally { await cancelled.srv.close(); }
+
+    const active = await setup({ billing: fakeBilling({
+        ent: { plan: 'pro', source: 'subscription', until: '2026-10-28T00:00:00.000Z' },
+        subs: [{ user_id: USER, razorpay_subscription_id: 'sub_act', status: 'active', current_end: '2026-10-28T00:00:00.000Z', cancel_at_period_end: false }],
+    }) });
+    try {
+        const body = await (await fetch(`${active.srv.url}/api/billing/status`, { headers: active.headers })).json();
+        assert.equal(body.resumable, false);
+    } finally { await active.srv.close(); }
+
+    const alreadyResuming = await setup({ billing: fakeBilling({
+        ent: { plan: 'pro', source: 'subscription', until: '2026-10-28T00:00:00.000Z' },
+        subs: [
+            { user_id: USER, razorpay_subscription_id: 'sub_old', status: 'active', current_end: '2026-10-28T00:00:00.000Z', cancel_at_period_end: true },
+            { user_id: USER, razorpay_subscription_id: 'sub_new', status: 'created', cancel_at_period_end: false },
+        ],
+    }) });
+    try {
+        const body = await (await fetch(`${alreadyResuming.srv.url}/api/billing/status`, { headers: alreadyResuming.headers })).json();
+        assert.equal(body.resumable, false);
+    } finally { await alreadyResuming.srv.close(); }
+
+    const comp = await setup({ billing: fakeBilling({ ent: { plan: 'pro', source: 'comp', until: null } }) });
+    try {
+        const body = await (await fetch(`${comp.srv.url}/api/billing/status`, { headers: comp.headers })).json();
+        assert.equal(body.resumable, false);
+    } finally { await comp.srv.close(); }
 });
 
 test('subscribe creates a Razorpay subscription and stores it', async () => {
@@ -198,6 +238,69 @@ test('subscribe: already pro → 409; activation in progress → 409', async () 
     try {
         assert.equal((await fetch(`${busy.srv.url}/api/billing/subscribe`, { method: 'POST', headers: busy.headers })).status, 409);
     } finally { await busy.srv.close(); }
+});
+
+// Resume Pro after cancelling: cancel_at_cycle_end keeps our row 'active' with
+// cancel_at_period_end=true (and the user Pro/subscription) until the paid period ends. Before
+// this, /subscribe always 409'd for any Pro user, so there was no way to undo the cancel.
+test('subscribe: resume — no open row, a scheduled cancellation still in its paid period → creates a new subscription starting when the old period ends', async () => {
+    const billing = fakeBilling({
+        ent: { plan: 'pro', source: 'subscription', until: '2026-10-28T00:00:00.000Z' },
+        subs: [{ user_id: USER, razorpay_subscription_id: 'sub_old', status: 'active', current_end: '2026-10-28T00:00:00.000Z', cancel_at_period_end: true }],
+    });
+    const { srv, headers, billing: b, razorpay } = await setup({ billing });
+    try {
+        const res = await fetch(`${srv.url}/api/billing/subscribe`, { method: 'POST', headers });
+        assert.equal(res.status, 200);
+        assert.deepEqual(await res.json(), { subscriptionId: 'sub_new1', keyId: 'rzp_test_k', resume: true });
+        assert.equal(razorpay.log.created[0].startAt, Math.floor(Date.parse('2026-10-28T00:00:00.000Z') / 1000));
+        assert.equal(b.log.inserted[0].status, 'created');
+        // the old scheduled-cancel row is untouched: it keeps Pro access until current_end.
+        assert.equal(billing.subs.find((s) => s.razorpay_subscription_id === 'sub_old').status, 'active');
+    } finally { await srv.close(); }
+});
+
+test('subscribe: resume — a new created row already exists (double click) reuses it instead of creating another', async () => {
+    const remote = { sub_new_click: { id: 'sub_new_click', status: 'created', plan_id: 'plan_1' } };
+    const billing = fakeBilling({
+        ent: { plan: 'pro', source: 'subscription', until: '2026-10-28T00:00:00.000Z' },
+        subs: [
+            { user_id: USER, razorpay_subscription_id: 'sub_old', status: 'active', current_end: '2026-10-28T00:00:00.000Z', cancel_at_period_end: true },
+            { user_id: USER, razorpay_subscription_id: 'sub_new_click', status: 'created', cancel_at_period_end: false },
+        ],
+    });
+    const { srv, headers, razorpay } = await setup({ billing, razorpay: fakeRazorpay({ remote }) });
+    try {
+        const res = await fetch(`${srv.url}/api/billing/subscribe`, { method: 'POST', headers });
+        assert.equal(res.status, 200);
+        assert.deepEqual(await res.json(), { subscriptionId: 'sub_new_click', keyId: 'rzp_test_k' });
+        assert.equal(razorpay.log.created.length, 0);
+    } finally { await srv.close(); }
+});
+
+test('subscribe: comp Pro → 409 (no resume path for non-subscription sources)', async () => {
+    const { srv, headers } = await setup({ billing: fakeBilling({ ent: { plan: 'pro', source: 'comp', until: null } }) });
+    try {
+        assert.equal((await fetch(`${srv.url}/api/billing/subscribe`, { method: 'POST', headers })).status, 409);
+    } finally { await srv.close(); }
+});
+
+test('subscribe: admin Pro → 409 (no resume path for non-subscription sources)', async () => {
+    const { srv, headers } = await setup({ billing: fakeBilling({ ent: { plan: 'pro', source: 'admin', until: null } }) });
+    try {
+        assert.equal((await fetch(`${srv.url}/api/billing/subscribe`, { method: 'POST', headers })).status, 409);
+    } finally { await srv.close(); }
+});
+
+test('subscribe: active, not cancelled, no scheduled-cancel row → still 409 (nothing to resume)', async () => {
+    const billing = fakeBilling({
+        ent: { plan: 'pro', source: 'subscription', until: '2026-10-28T00:00:00.000Z' },
+        subs: [],
+    });
+    const { srv, headers } = await setup({ billing });
+    try {
+        assert.equal((await fetch(`${srv.url}/api/billing/subscribe`, { method: 'POST', headers })).status, 409);
+    } finally { await srv.close(); }
 });
 
 test('subscribe: insert race returns the winner', async () => {

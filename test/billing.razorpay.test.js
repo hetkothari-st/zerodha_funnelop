@@ -26,6 +26,15 @@ test('createSubscription posts plan, notes.user_id and basic auth', async () => 
     assert.equal(body.plan_id, 'plan_1');
     assert.equal(body.notes.user_id, 'u1');
     assert.ok(body.total_count >= 12);
+    assert.equal(body.start_at, undefined);
+});
+
+test('createSubscription includes start_at when given (resume: starts when the old period ends)', async () => {
+    const { calls, fetchImpl } = recorder([{ body: { id: 'sub_2', status: 'created' } }]);
+    const rz = createRazorpay({ keyId: 'k', keySecret: 's', fetchImpl });
+    await rz.createSubscription({ planId: 'plan_1', userId: 'u1', startAt: 1767225600 });
+    const body = JSON.parse(calls[0].init.body);
+    assert.equal(body.start_at, 1767225600);
 });
 
 test('cancelSubscription cancels at cycle end', async () => {
